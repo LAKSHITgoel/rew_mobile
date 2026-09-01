@@ -12,6 +12,7 @@
 #include "rewcore/fft.hpp"
 #include "rewcore/peq.hpp"
 #include "rewcore/wav.hpp"
+#include "rewcore_ffi.h"
 
 using namespace rewcore;
 
@@ -233,6 +234,79 @@ static void testCrossoverSummation() {
              -6.0206, 0.01);
 }
 
+static void testRecommendCrossover() {
+  std::printf("test: measured crossover recommendation\n");
+  // Synthesize a band-limited driver: high-passed at 500 Hz, low-passed at 5000 Hz.
+  FreqResponse driver;
+  const std::size_t pts = 200;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    const double hp = highpassMagnitude(f, 500.0, Slope::LinkwitzRiley24);
+    const double lp = lowpassMagnitude(f, 5000.0, Slope::LinkwitzRiley24);
+    driver.freqHz.push_back(f);
+    driver.magDb.push_back(20.0 * std::log10(hp * lp));
+  }
+  const CrossoverRecommendation rec = recommendCrossover(driver, 6.0);
+  CHECK(rec.hasHighPass);
+  CHECK(rec.hasLowPass);
+  std::printf("  suggested HPF=%.0f Hz, LPF=%.0f Hz\n", rec.highPassHz, rec.lowPassHz);
+  CHECK(rec.highPassHz > 420 && rec.highPassHz < 600);
+  CHECK(rec.lowPassHz > 4200 && rec.lowPassHz < 6000);
+}
+
+static void testFfiCalibration() {
+  std::printf("test: FFI measurement applies mic calibration\n");
+  // Identity system: recorded == emitted -> flat 0 dB measured response.
+  SweepSpec spec;
+  spec.fs = 48000;
+  spec.f1 = 50;
+  spec.f2 = 18000;
+  spec.durationSec = 1.0;
+  const std::vector<double> sweep = generateExpSweep(spec);
+
+  const int points = 48;
+  std::vector<double> f1(points), m1(points), f2(points), m2(points);
+
+  const size_t n1 = rew_measure_fr(sweep.data(), sweep.size(), sweep.data(),
+                                   sweep.size(), spec.fs, 50, 18000, 24, points,
+                                   nullptr, nullptr, 0, f1.data(), m1.data(), points);
+
+  // A flat +3 dB mic calibration should pull the measured response down by 3 dB.
+  std::vector<double> calF = {20, 20000};
+  std::vector<double> calG = {3, 3};
+  const size_t n2 = rew_measure_fr(sweep.data(), sweep.size(), sweep.data(),
+                                   sweep.size(), spec.fs, 50, 18000, 24, points,
+                                   calF.data(), calG.data(), calF.size(),
+                                   f2.data(), m2.data(), points);
+  CHECK(n1 == n2 && n1 > 0);
+  // Compare a mid-band point.
+  const std::size_t mid = n1 / 2;
+  CHECK_NEAR(m1[mid] - m2[mid], 3.0, 0.3);
+}
+
+static void testFfiPeqErrorOut() {
+  std::printf("test: FFI PEQ fit reports error metrics\n");
+  const double fs = 48000;
+  std::vector<PeqBand> distortion = {{90.0, 7.0, 1.0}, {4000.0, -6.0, 2.0}};
+  const int n = 200;
+  std::vector<double> freq(n), mag(n);
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (int i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / (n - 1);
+    freq[i] = std::exp(logMin + t * (logMax - logMin));
+    mag[i] = cascadeMagnitudeDb(distortion, freq[i], fs);
+  }
+  std::vector<double> fo(10), go(10), qo(10), err(2);
+  const size_t bands = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20, 20000,
+                                        10, fo.data(), go.data(), qo.data(),
+                                        err.data());
+  CHECK(bands > 0);
+  CHECK(err[0] > 1.0);          // initial error meaningful
+  CHECK(err[1] < err[0]);       // EQ reduced it
+}
+
 static void testCalibration() {
   std::printf("test: mic calibration parse & apply\n");
   const std::string text =
@@ -285,6 +359,9 @@ int main() {
   testPeqFitReducesError();
   testPeqQEstimation();
   testCrossoverSummation();
+  testRecommendCrossover();
+  testFfiCalibration();
+  testFfiPeqErrorOut();
   testCalibration();
   testWavRoundTrip();
 

@@ -85,6 +85,36 @@ class _WizardScreenState extends State<WizardScreen> {
     }
   }
 
+  Future<void> _pasteCalibration() async {
+    final ctrl = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Paste calibration file'),
+        content: SizedBox(
+          width: 400,
+          child: TextField(
+            controller: ctrl,
+            maxLines: 10,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            decoration: const InputDecoration(
+              hintText: '"20 0.5\\n1000 0.0\\n..." — the contents of your UMIK-1 .txt',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, ctrl.text),
+              child: const Text('Load')),
+        ],
+      ),
+    );
+    if (text != null && text.trim().isNotEmpty) c.loadCalibration(text);
+  }
+
   // ---- Steps --------------------------------------------------------------
 
   Widget _setupStep() {
@@ -102,6 +132,23 @@ class _WizardScreenState extends State<WizardScreen> {
             subtitle: const Text('UMIK-1 over USB'),
             trailing: TextButton(
                 onPressed: c.refreshMic, child: const Text('Refresh')),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: Icon(c.hasCalibration ? Icons.verified : Icons.rule,
+                color: c.hasCalibration ? Colors.green : null),
+            title: Text(c.hasCalibration
+                ? 'Calibration loaded'
+                : 'Load UMIK-1 calibration'),
+            subtitle: Text(c.calibrationSummary ??
+                'Paste your mic\'s calibration .txt so measurements reflect the '
+                    'speakers, not the mic.'),
+            trailing: TextButton(
+              onPressed: _pasteCalibration,
+              child: Text(c.hasCalibration ? 'Replace' : 'Load'),
+            ),
           ),
         ),
         const SizedBox(height: 12),
@@ -131,10 +178,55 @@ class _WizardScreenState extends State<WizardScreen> {
   Widget _crossoverStep() {
     final sum = summation(_xoverFc, _slope, _slope);
     final summedFr = FreqResponse(sum.freqHz, sum.summedDb);
+    final rec = c.lastCrossoverRec;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         Text('Front 2-way crossover', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Measured recommendation',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                const Text(
+                  'Solo the tweeter (or mid) in the Alpine app, then measure — the app '
+                  'reads its natural roll-off and suggests a crossover.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Row(children: [
+                  FilledButton.tonalIcon(
+                    onPressed: c.busy
+                        ? null
+                        : () => c.runCrossoverMeasurement('fl_tweeter'),
+                    icon: const Icon(Icons.graphic_eq, size: 18),
+                    label: const Text('Measure driver'),
+                  ),
+                  const SizedBox(width: 12),
+                  if (rec != null)
+                    Expanded(
+                      child: Text(
+                        'HPF ${rec.highPassHz?.toStringAsFixed(0) ?? '—'} Hz · '
+                        'LPF ${rec.lowPassHz?.toStringAsFixed(0) ?? '—'} Hz',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                ]),
+                if (rec?.highPassHz != null)
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _xoverFc = rec!.highPassHz!),
+                    child: const Text('Use suggested crossover'),
+                  ),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 8),
         Text('Crossover: ${_xoverFc.toStringAsFixed(0)} Hz'),
         Slider(

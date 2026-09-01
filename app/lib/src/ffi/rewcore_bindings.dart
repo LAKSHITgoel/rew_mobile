@@ -4,6 +4,7 @@
 // regenerated with `dart run ffigen` (see pubspec.yaml) once the native library
 // is wired into the Flutter build. Keep the signatures in sync with the header.
 import 'dart:ffi' as ffi;
+import 'dart:io' show Platform;
 
 // const char* rew_version(void);
 typedef _RewVersionC = ffi.Pointer<ffi.Char> Function();
@@ -16,25 +17,36 @@ typedef RewGenerateSweepDart = int Function(
     double, double, double, double, ffi.Pointer<ffi.Double>, int);
 
 // size_t rew_measure_fr(emitted*, emittedLen, recorded*, recordedLen, fs,
-//                       fMin, fMax, smoothFrac, points, freqOut*, magOut*, cap);
+//                       fMin, fMax, smoothFrac, points,
+//                       calFreq*, calGain*, calN, freqOut*, magOut*, cap);
 typedef _RewMeasureFrC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Size, ffi.Pointer<ffi.Double>, ffi.Size,
     ffi.Double, ffi.Double, ffi.Double, ffi.Double, ffi.Size,
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size);
 typedef RewMeasureFrDart = int Function(
     ffi.Pointer<ffi.Double>, int, ffi.Pointer<ffi.Double>, int,
     double, double, double, double, int,
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int);
 
 // size_t rew_fit_peq_flat(freq*, mag*, n, fs, fMin, fMax, maxBands,
-//                         freqOut*, gainOut*, qOut*);
+//                         freqOut*, gainOut*, qOut*, errOut*);
 typedef _RewFitPeqFlatC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
     ffi.Double, ffi.Double, ffi.Int, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
 typedef RewFitPeqFlatDart = int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
     double, double, int, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+
+// int rew_recommend_crossover(freq*, mag*, n, dropDb, hpOut*, lpOut*);
+typedef _RewRecommendCrossoverC = ffi.Int Function(
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+typedef RewRecommendCrossoverDart = int Function(
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
 
 /// Resolved function pointers for the rewcore native library.
@@ -48,18 +60,27 @@ class RewcoreBindings {
         rewMeasureFr = lib
             .lookupFunction<_RewMeasureFrC, RewMeasureFrDart>('rew_measure_fr'),
         rewFitPeqFlat = lib.lookupFunction<_RewFitPeqFlatC, RewFitPeqFlatDart>(
-            'rew_fit_peq_flat');
+            'rew_fit_peq_flat'),
+        rewRecommendCrossover =
+            lib.lookupFunction<_RewRecommendCrossoverC, RewRecommendCrossoverDart>(
+                'rew_recommend_crossover');
 
   final RewVersionDart rewVersion;
   final RewGenerateSweepDart rewGenerateSweep;
   final RewMeasureFrDart rewMeasureFr;
   final RewFitPeqFlatDart rewFitPeqFlat;
+  final RewRecommendCrossoverDart rewRecommendCrossover;
 
-  /// Opens the rewcore shared library for the current platform. The name matches
-  /// what the `plugin_ffi` template links; adjust if the plugin is renamed.
+  /// Opens the rewcore native library for the current platform. The library name
+  /// matches the `rewcore_ffi` plugin (see packages/rewcore_ffi).
   static ffi.DynamicLibrary open() {
-    // Android/Linux: .so; iOS/macOS: symbols are in the process (statically
-    // linked framework); Windows: .dll.
-    return ffi.DynamicLibrary.executable();
+    if (Platform.isAndroid || Platform.isLinux) {
+      return ffi.DynamicLibrary.open('librewcore_ffi.so');
+    }
+    if (Platform.isWindows) {
+      return ffi.DynamicLibrary.open('rewcore_ffi.dll');
+    }
+    // iOS/macOS: statically linked into the app, symbols are in the process.
+    return ffi.DynamicLibrary.process();
   }
 }

@@ -50,6 +50,13 @@ class EqResult {
   final double finalErrorDb;
 }
 
+/// Suggested crossover edges for one measured driver (from rewcore).
+class CrossoverRecommendation {
+  const CrossoverRecommendation({this.highPassHz, this.lowPassHz});
+  final double? highPassHz;
+  final double? lowPassHz;
+}
+
 /// Crossover slope options, mirroring rewcore's `Slope`.
 enum XoverSlope { butterworth12, linkwitzRiley24, linkwitzRiley48 }
 

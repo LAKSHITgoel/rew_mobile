@@ -4,10 +4,17 @@ import 'dart:math' as math;
 
 import '../models/measurement.dart';
 
-/// Magnitude (dB) of an RBJ peaking biquad at frequency [f].
-double peakingMagnitudeDb(double f, double fs, double gainDb, double q) {
+/// Magnitude (dB) at [evalHz] of an RBJ peaking biquad centered at [f0].
+/// (Center and evaluation frequency are distinct — a band shapes the whole curve.)
+double peakingMagnitudeDb({
+  required double evalHz,
+  required double f0,
+  required double fs,
+  required double gainDb,
+  required double q,
+}) {
   final a = math.pow(10, gainDb / 40).toDouble();
-  final w0 = 2 * math.pi * f / fs;
+  final w0 = 2 * math.pi * f0 / fs;
   final cw = math.cos(w0), sw = math.sin(w0);
   final alpha = sw / (2 * q);
   final a0 = 1 + alpha / a;
@@ -17,7 +24,7 @@ double peakingMagnitudeDb(double f, double fs, double gainDb, double q) {
   final a1 = (-2 * cw) / a0;
   final a2 = (1 - alpha / a) / a0;
 
-  final w = 2 * math.pi * f / fs;
+  final w = 2 * math.pi * evalHz / fs;
   final cosw = math.cos(w), sinw = math.sin(w);
   final cos2w = math.cos(2 * w), sin2w = math.sin(2 * w);
   final numRe = b0 + b1 * cosw + b2 * cos2w;
@@ -35,7 +42,8 @@ FreqResponse applyEqPreview(FreqResponse measured, List<PeqBand> bands, double f
   for (var i = 0; i < measured.length; i++) {
     var db = measured.magDb[i];
     for (final b in bands) {
-      db += peakingMagnitudeDb(measured.freqHz[i], fs, b.gainDb, b.q);
+      db += peakingMagnitudeDb(
+          evalHz: measured.freqHz[i], f0: b.freqHz, fs: fs, gainDb: b.gainDb, q: b.q);
     }
     out[i] = db;
   }

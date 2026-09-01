@@ -11,6 +11,8 @@ dependencies:
   flutter:
     sdk: flutter
   ffi: ^2.1.0            # calloc/malloc helpers for dart:ffi
+  rewcore_ffi:          # compiles + bundles the native rewcore library
+    path: ../packages/rewcore_ffi
 
 dev_dependencies:
   flutter_test:

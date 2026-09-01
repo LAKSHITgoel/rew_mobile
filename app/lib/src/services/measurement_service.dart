@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import '../audio/audio_backend.dart';
 import '../ffi/rewcore.dart';
 import '../models/measurement.dart';
+import '../models/mic_calibration.dart';
 
 class MeasurementConfig {
   const MeasurementConfig({
@@ -31,6 +32,9 @@ class MeasurementService {
   final AudioBackend _audio;
   final MeasurementConfig config;
 
+  /// UMIK-1 calibration applied to every measurement (null = none loaded).
+  MicCalibration? calibration;
+
   Float64List? _sweep;
   Float64List get sweep =>
       _sweep ??= _core.generateSweep(
@@ -54,8 +58,13 @@ class MeasurementService {
       fMax: config.fMax,
       smoothFrac: config.smoothFrac,
       points: config.points,
+      calibration: calibration,
     );
   }
+
+  /// Recommend crossover edges from a single driver's measured response.
+  CrossoverRecommendation recommendCrossover(FreqResponse driver) =>
+      _core.recommendCrossover(driver);
 
   /// Run [n] captures (e.g. around the listening position) and power-average them.
   Future<FreqResponse> measureAveraged(int n) async {

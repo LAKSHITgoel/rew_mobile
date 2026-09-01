@@ -2,12 +2,12 @@
 // calloc/free bookkeeping lives here so the rest of the app deals only in Dart
 // lists and model objects.
 import 'dart:ffi' as ffi;
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
 import '../models/measurement.dart';
+import '../models/mic_calibration.dart';
 import 'rewcore_bindings.dart';
 
 class Rewcore {
@@ -39,7 +39,8 @@ class Rewcore {
   }
 
   /// Deconvolve a recording against the emitted sweep and return a smoothed,
-  /// log-gridded magnitude response.
+  /// log-gridded magnitude response. If [calibration] is supplied, the UMIK-1 cal
+  /// curve is applied so the result reflects the speakers/room, not the mic.
   FreqResponse measureFr({
     required Float64List emitted,
     required Float64List recorded,
@@ -48,16 +49,28 @@ class Rewcore {
     double fMax = 20000,
     double smoothFrac = 24,
     int points = 96,
+    MicCalibration? calibration,
   }) {
     final em = calloc<ffi.Double>(emitted.length);
     final rec = calloc<ffi.Double>(recorded.length);
     final freqOut = calloc<ffi.Double>(points);
     final magOut = calloc<ffi.Double>(points);
+
+    final cal = calibration;
+    final hasCal = cal != null && !cal.isEmpty;
+    final calN = hasCal ? cal!.freqHz.length : 0;
+    final calFreq = hasCal ? calloc<ffi.Double>(calN) : ffi.nullptr;
+    final calGain = hasCal ? calloc<ffi.Double>(calN) : ffi.nullptr;
     try {
       em.asTypedList(emitted.length).setAll(0, emitted);
       rec.asTypedList(recorded.length).setAll(0, recorded);
-      final n = _b.rewMeasureFr(em, emitted.length, rec, recorded.length, fs,
-          fMin, fMax, smoothFrac, points, freqOut, magOut, points);
+      if (hasCal) {
+        calFreq.cast<ffi.Double>().asTypedList(calN).setAll(0, cal!.freqHz);
+        calGain.cast<ffi.Double>().asTypedList(calN).setAll(0, cal.gainDb);
+      }
+      final n = _b.rewMeasureFr(
+          em, emitted.length, rec, recorded.length, fs, fMin, fMax, smoothFrac,
+          points, calFreq.cast(), calGain.cast(), calN, freqOut, magOut, points);
       return FreqResponse(
         List<double>.from(freqOut.asTypedList(n)),
         List<double>.from(magOut.asTypedList(n)),
@@ -67,6 +80,34 @@ class Rewcore {
       calloc.free(rec);
       calloc.free(freqOut);
       calloc.free(magOut);
+      if (hasCal) {
+        calloc.free(calFreq);
+        calloc.free(calGain);
+      }
+    }
+  }
+
+  /// Recommend crossover edges for one measured driver response.
+  CrossoverRecommendation recommendCrossover(FreqResponse driver,
+      {double dropDb = 6}) {
+    final n = driver.length;
+    final freq = calloc<ffi.Double>(n);
+    final mag = calloc<ffi.Double>(n);
+    final hp = calloc<ffi.Double>(1);
+    final lp = calloc<ffi.Double>(1);
+    try {
+      freq.asTypedList(n).setAll(0, driver.freqHz);
+      mag.asTypedList(n).setAll(0, driver.magDb);
+      final mask = _b.rewRecommendCrossover(freq, mag, n, dropDb, hp, lp);
+      return CrossoverRecommendation(
+        highPassHz: (mask & 1) != 0 ? hp.value : null,
+        lowPassHz: (mask & 2) != 0 ? lp.value : null,
+      );
+    } finally {
+      calloc.free(freq);
+      calloc.free(mag);
+      calloc.free(hp);
+      calloc.free(lp);
     }
   }
 
@@ -84,35 +125,28 @@ class Rewcore {
     final fOut = calloc<ffi.Double>(maxBands);
     final gOut = calloc<ffi.Double>(maxBands);
     final qOut = calloc<ffi.Double>(maxBands);
+    final errOut = calloc<ffi.Double>(2);
     try {
       freq.asTypedList(n).setAll(0, measured.freqHz);
       mag.asTypedList(n).setAll(0, measured.magDb);
       final count = _b.rewFitPeqFlat(
-          freq, mag, n, fs, fMin, fMax, maxBands, fOut, gOut, qOut);
+          freq, mag, n, fs, fMin, fMax, maxBands, fOut, gOut, qOut, errOut);
       final bands = <PeqBand>[];
       for (var i = 0; i < count; i++) {
-        bands.add(PeqBand(
-            freqHz: fOut[i], gainDb: gOut[i], q: qOut[i]));
+        bands.add(PeqBand(freqHz: fOut[i], gainDb: gOut[i], q: qOut[i]));
       }
-      // The C ABI does not return the error metrics, so recompute a simple RMS
-      // here for display (0 target). This mirrors rewcore::rmsErrorDb.
-      final before = _rms(measured.magDb);
-      return EqResult(bands: bands, initialErrorDb: before, finalErrorDb: 0);
+      return EqResult(
+        bands: bands,
+        initialErrorDb: errOut[0],
+        finalErrorDb: errOut[1],
+      );
     } finally {
       calloc.free(freq);
       calloc.free(mag);
       calloc.free(fOut);
       calloc.free(gOut);
       calloc.free(qOut);
+      calloc.free(errOut);
     }
-  }
-
-  static double _rms(List<double> v) {
-    if (v.isEmpty) return 0;
-    var acc = 0.0;
-    for (final x in v) {
-      acc += x * x;
-    }
-    return math.sqrt(acc / v.length);
   }
 }

@@ -22,17 +22,28 @@ size_t rew_generate_sweep(double fs, double f1, double f2, double durationSec,
 // Writes up to `cap` (freq, magDb) pairs into freqOut/magOut on a log grid over
 // [fMin, fMax] after 1/`smoothFrac`-octave smoothing. Returns the number of points
 // written. `points` requests the grid density (clamped to cap).
+//
+// If `calN` > 0, a UMIK-1 microphone calibration (parallel calFreq/calGain arrays) is
+// applied to the response. Pass calFreq/calGain = NULL and calN = 0 to skip.
 size_t rew_measure_fr(const double* emitted, size_t emittedLen,
                       const double* recorded, size_t recordedLen, double fs,
                       double fMin, double fMax, double smoothFrac, size_t points,
+                      const double* calFreq, const double* calGain, size_t calN,
                       double* freqOut, double* magOut, size_t cap);
 
 // Fit up to `maxBands` parametric EQ bands to move `measured` toward a flat target.
 // Inputs are parallel freq/mag arrays of length `n`. Writes chosen bands into the
 // parallel freq/gain/q output arrays (capacity `maxBands`) and returns the band count.
+// If `errOut` is non-NULL it receives {initialErrorDb, finalErrorDb} (2 doubles).
 size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
                         double fMin, double fMax, int maxBands, double* freqOut,
-                        double* gainOut, double* qOut);
+                        double* gainOut, double* qOut, double* errOut);
+
+// Recommend crossover edges for one measured driver (parallel freq/mag, length `n`).
+// Writes the high-pass edge to hpOut and low-pass edge to lpOut (Hz). Returns a bit
+// mask: bit0 set => high-pass suggested, bit1 set => low-pass suggested.
+int rew_recommend_crossover(const double* freq, const double* mag, size_t n,
+                            double dropDb, double* hpOut, double* lpOut);
 
 #ifdef __cplusplus
 }

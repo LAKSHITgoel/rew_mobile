@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../audio/audio_backend.dart';
 import '../models/measurement.dart';
+import '../models/mic_calibration.dart';
 import '../models/project.dart';
 import '../services/measurement_service.dart';
 import '../services/project_store.dart';
@@ -41,12 +42,49 @@ class WizardController extends ChangeNotifier {
   FreqResponse? lastMeasurement;
   EqResult? lastEq;
 
+  /// Most recent per-driver measurement + its crossover recommendation.
+  FreqResponse? lastDriverMeasurement;
+  CrossoverRecommendation? lastCrossoverRec;
+
+  bool get hasCalibration => service.calibration != null;
+  String? calibrationSummary;
+
   int eqMaxBands = 10;
   int averagingPositions = 3;
 
   Future<void> refreshMic() async {
     mic = await service.micStatus();
     notifyListeners();
+  }
+
+  /// Parse and apply a pasted/loaded UMIK-1 calibration file.
+  void loadCalibration(String text) {
+    final cal = MicCalibration.parse(text);
+    if (cal.isEmpty) {
+      status = 'Calibration file had no usable points.';
+    } else {
+      service.calibration = cal;
+      calibrationSummary =
+          '${cal.freqHz.length} points, ${cal.freqHz.first.toStringAsFixed(0)}–'
+          '${cal.freqHz.last.toStringAsFixed(0)} Hz'
+          '${cal.sensitivityDbFs != null ? ', sens ${cal.sensitivityDbFs} dB' : ''}';
+    }
+    notifyListeners();
+  }
+
+  /// Measure a single (soloed) driver and compute a crossover recommendation.
+  Future<void> runCrossoverMeasurement(String channelId) async {
+    await _run('Measuring driver…', () async {
+      final fr = await service.measureOnce();
+      lastDriverMeasurement = fr;
+      lastCrossoverRec = service.recommendCrossover(fr);
+      project.measured[channelId] = fr;
+      await store.save(project);
+      final r = lastCrossoverRec!;
+      status = 'Suggested '
+          '${r.highPassHz != null ? 'HPF ${r.highPassHz!.toStringAsFixed(0)} Hz' : 'no HPF'}, '
+          '${r.lowPassHz != null ? 'LPF ${r.lowPassHz!.toStringAsFixed(0)} Hz' : 'no LPF'}.';
+    });
   }
 
   void goto(WizardStep s) {
