@@ -93,14 +93,14 @@ class WizardController extends ChangeNotifier {
   }
 
   void next() {
-    final order = WizardStep.values;
+    const order = WizardStep.values;
     final i = order.indexOf(step);
     if (i + 1 < order.length) step = order[i + 1];
     notifyListeners();
   }
 
   void back() {
-    final order = WizardStep.values;
+    const order = WizardStep.values;
     final i = order.indexOf(step);
     if (i > 0) step = order[i - 1];
     notifyListeners();

@@ -56,21 +56,25 @@ class Rewcore {
     final freqOut = calloc<ffi.Double>(points);
     final magOut = calloc<ffi.Double>(points);
 
+    // Optional mic calibration. A direct null-check inside the `if` promotes `cal`
+    // to non-null without needing `!`, and works across SDK versions.
+    ffi.Pointer<ffi.Double> calFreq = ffi.nullptr;
+    ffi.Pointer<ffi.Double> calGain = ffi.nullptr;
+    var calN = 0;
     final cal = calibration;
-    final hasCal = cal != null && !cal.isEmpty;
-    final calN = hasCal ? cal!.freqHz.length : 0;
-    final calFreq = hasCal ? calloc<ffi.Double>(calN) : ffi.nullptr;
-    final calGain = hasCal ? calloc<ffi.Double>(calN) : ffi.nullptr;
+    if (cal != null && !cal.isEmpty) {
+      calN = cal.freqHz.length;
+      calFreq = calloc<ffi.Double>(calN);
+      calGain = calloc<ffi.Double>(calN);
+      calFreq.asTypedList(calN).setAll(0, cal.freqHz);
+      calGain.asTypedList(calN).setAll(0, cal.gainDb);
+    }
     try {
       em.asTypedList(emitted.length).setAll(0, emitted);
       rec.asTypedList(recorded.length).setAll(0, recorded);
-      if (hasCal) {
-        calFreq.cast<ffi.Double>().asTypedList(calN).setAll(0, cal!.freqHz);
-        calGain.cast<ffi.Double>().asTypedList(calN).setAll(0, cal.gainDb);
-      }
       final n = _b.rewMeasureFr(
           em, emitted.length, rec, recorded.length, fs, fMin, fMax, smoothFrac,
-          points, calFreq.cast(), calGain.cast(), calN, freqOut, magOut, points);
+          points, calFreq, calGain, calN, freqOut, magOut, points);
       return FreqResponse(
         List<double>.from(freqOut.asTypedList(n)),
         List<double>.from(magOut.asTypedList(n)),
@@ -80,7 +84,7 @@ class Rewcore {
       calloc.free(rec);
       calloc.free(freqOut);
       calloc.free(magOut);
-      if (hasCal) {
+      if (calN > 0) {
         calloc.free(calFreq);
         calloc.free(calGain);
       }

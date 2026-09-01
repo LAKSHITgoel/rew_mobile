@@ -116,7 +116,7 @@ class _FrPainter extends CustomPainter {
     for (var db = dbMin; db <= dbMax; db += 6) {
       final y = _y(db, size);
       final p = Paint()
-        ..color = db == 0 ? textColor.withOpacity(0.5) : gridColor
+        ..color = db == 0 ? textColor.withAlpha(128) : gridColor
         ..strokeWidth = db == 0 ? 1.2 : 0.6;
       canvas.drawLine(Offset(_padL, y), Offset(size.width - _padR, y), p);
       _text(canvas, '${db.toInt()}', Offset(2, y - 6), 9);
