@@ -14,6 +14,13 @@ The only iOS-specific code. Exposes a small Flutter plugin surface; all DSP goes
 - **Capture** via `AVAudioEngine` input tap; hand float buffers straight to `rewcore`.
 - **Calibration file import** via `UIDocumentPickerViewController`.
 
+## Reference implementation
+
+`RewAudioPlugin.swift` implements the `rew_mobile/audio` channel: `.playAndRecord`
+with `.allowBluetoothA2DP`, preferred input set to the `.usbAudio` port, an
+`AVAudioPlayerNode` for the sweep and an input-node tap for capture. Needs on-device
+validation — especially that output routes to CarPlay/BT while input stays on USB.
+
 ## Notes
 
 - Add `NSMicrophoneUsageDescription`.
