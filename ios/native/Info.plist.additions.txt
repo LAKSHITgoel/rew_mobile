@@ -1,0 +1,17 @@
+Merge into the app's ios/Runner/Info.plist (inside the top-level <dict>):
+
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Used to measure your car's sound with the UMIK-1 microphone.</string>
+
+Registration: if RewAudioPlugin.swift is not part of an auto-registered Flutter
+plugin, register the channel in AppDelegate.application(_:didFinishLaunchingWithOptions:)
+after GeneratedPluginRegistrant.register(with: self):
+
+    RewAudioPlugin.register(
+        with: self.registrar(forPlugin: "RewAudioPlugin")!)
+
+Notes:
+  * The UMIK-1 connects via a USB-C / Lightning camera adapter; no special entitlement
+    is required beyond the microphone usage string.
+  * To keep measuring with the screen active, no background audio mode is needed; add
+    the "audio" UIBackgroundModes only if you later measure with the app backgrounded.

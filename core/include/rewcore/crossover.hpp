@@ -1,6 +1,8 @@
 #pragma once
 #include <vector>
 
+#include "rewcore/dsp.hpp"
+
 namespace rewcore {
 
 enum class Slope {
@@ -29,5 +31,22 @@ struct SummationCheck {
 // magnitude sum is flat, so a large deviation flags a phase/level mismatch to fix.
 SummationCheck checkSummation(double fc, Slope lowSlope, Slope highSlope,
                               double fMin, double fMax, int points = 200);
+
+// Suggested crossover edges for a single measured driver, from where its response
+// falls off relative to its passband.
+struct CrossoverRecommendation {
+  bool hasHighPass = false;  // driver rolls off at the bottom -> high-pass it here
+  double highPassHz = 0.0;
+  bool hasLowPass = false;   // driver rolls off at the top -> low-pass it here
+  double lowPassHz = 0.0;
+  double passbandDb = 0.0;   // reference passband level used
+};
+
+// Estimate a driver's usable band from its measured response: the passband reference
+// is the median of the loudest region, and the edges are where the response drops
+// `dropDb` below it. If the response is still within `dropDb` at the measured extreme,
+// no crossover is suggested on that side (has*Pass == false).
+CrossoverRecommendation recommendCrossover(const FreqResponse& driver,
+                                           double dropDb = 6.0);
 
 }  // namespace rewcore

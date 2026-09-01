@@ -1,0 +1,18 @@
+# Regenerate Dart FFI bindings from the C ABI header:
+#   cd packages/rewcore_ffi && dart run ffigen
+# The generated file can replace the hand-written app/lib/src/ffi/rewcore_bindings.dart
+# (keep the DynamicLibrary.open() helper, which ffigen does not produce).
+name: RewcoreFfiBindings
+description: Generated bindings for the rewcore C ABI.
+output: "lib/rewcore_ffi_bindings.g.dart"
+headers:
+  entry-points:
+    - "../../core/ffi/rewcore_ffi.h"
+  include-directives:
+    - "../../core/ffi/rewcore_ffi.h"
+functions:
+  include:
+    - "rew_.*"
+comments:
+  style: any
+  length: full

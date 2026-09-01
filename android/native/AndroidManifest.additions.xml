@@ -1,0 +1,24 @@
+<!-- Merge these into the app's android/app/src/main/AndroidManifest.xml
+     (inside <manifest>, above <application>). Required for the UMIK-1 over USB
+     and for recording. -->
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+<!-- Optional: auto-launch / auto-grant when the UMIK-1 is plugged in. Add inside the
+     main <activity> and create res/xml/usb_device_filter.xml with the mic's
+     vendor/product id (miniDSP UMIK-1 enumerates under a C-Media codec VID/PID).
+<intent-filter>
+    <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+</intent-filter>
+<meta-data
+    android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+    android:resource="@xml/usb_device_filter" />
+-->
+
+<!-- Register the audio plugin (if not using an auto-registered Flutter plugin):
+     in MainActivity.configureFlutterEngine(), after super():
+         RewAudioPlugin(this).let { plugin ->
+             MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "rew_mobile/audio")
+                 .setMethodCallHandler(plugin)
+         }
+-->

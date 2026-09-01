@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  core:
+    name: C++ core (build + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  app:
+    name: Flutter app (analyze + test)
+    runs-on: ubuntu-latest
+    # Best-effort until the platform folders are bootstrapped/committed once on an SDK
+    # machine; the C++ core job above is the required gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Bootstrap platform folders
+        working-directory: app
+        # `flutter create` is idempotent; it fills in android/, ios/, etc. without
+        # touching lib/ or test/, so analyze/test can run in CI.
+        run: flutter create --platforms=android,ios,linux,macos,windows .
+      - name: Pub get
+        working-directory: app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze
+      - name: Test
+        working-directory: app
+        run: flutter test

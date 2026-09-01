@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace rewcore {
 
@@ -63,6 +64,60 @@ SummationCheck checkSummation(double fc, Slope lowSlope, Slope highSlope,
     out.maxDeviationDb = std::max(out.maxDeviationDb, std::fabs(db));
   }
   return out;
+}
+
+CrossoverRecommendation recommendCrossover(const FreqResponse& driver,
+                                           double dropDb) {
+  CrossoverRecommendation rec;
+  const std::size_t n = driver.magDb.size();
+  if (n < 3) return rec;
+
+  // Passband reference: median of the top 25% of levels (robust to a single peak).
+  std::vector<double> sorted = driver.magDb;
+  std::sort(sorted.begin(), sorted.end());
+  const std::size_t lo = sorted.size() * 3 / 4;
+  double acc = 0.0;
+  std::size_t cnt = 0;
+  for (std::size_t i = lo; i < sorted.size(); ++i) {
+    acc += sorted[i];
+    ++cnt;
+  }
+  const double ref = cnt ? acc / cnt : sorted.back();
+  rec.passbandDb = ref;
+  const double threshold = ref - dropDb;
+
+  // Index of the loudest point anchors the passband.
+  std::size_t peak = 0;
+  for (std::size_t i = 1; i < n; ++i) {
+    if (driver.magDb[i] > driver.magDb[peak]) peak = i;
+  }
+
+  // Walk down from the peak toward low frequencies; the first crossing below the
+  // threshold marks the low edge (interpolated) -> high-pass point.
+  for (std::size_t i = peak; i > 0; --i) {
+    if (driver.magDb[i - 1] < threshold) {
+      const double f0 = driver.freqHz[i - 1], f1 = driver.freqHz[i];
+      const double d0 = driver.magDb[i - 1], d1 = driver.magDb[i];
+      const double t = (threshold - d0) / (d1 - d0);
+      rec.hasHighPass = true;
+      rec.highPassHz = std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      break;
+    }
+  }
+
+  // Walk up from the peak toward high frequencies; the first crossing below the
+  // threshold marks the high edge -> low-pass point.
+  for (std::size_t i = peak; i + 1 < n; ++i) {
+    if (driver.magDb[i + 1] < threshold) {
+      const double f0 = driver.freqHz[i], f1 = driver.freqHz[i + 1];
+      const double d0 = driver.magDb[i], d1 = driver.magDb[i + 1];
+      const double t = (threshold - d0) / (d1 - d0);
+      rec.hasLowPass = true;
+      rec.lowPassHz = std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      break;
+    }
+  }
+  return rec;
 }
 
 }  // namespace rewcore

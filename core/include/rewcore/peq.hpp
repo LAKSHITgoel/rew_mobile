@@ -27,7 +27,10 @@ struct PeqConstraints {
   double maxGainDb = 12.0;
   double minQ = 0.5;
   double maxQ = 8.0;
-  double defaultQ = 3.0;
+  double defaultQ = 3.0;         // fallback when a band's width can't be estimated
+  double minSpacingOctave = 0.15; // don't stack two bands closer than this
+  double edgeGuardOctave = 0.2;   // ignore corrections within this of fMin/fMax
+                                  // (the sweep's extreme edges are low-confidence)
 };
 
 struct PeqFitResult {

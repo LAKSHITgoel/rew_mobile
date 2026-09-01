@@ -17,6 +17,14 @@ through `rewcore` (built here with the NDK).
   (the phone's single USB port is taken by the mic — this is by design).
 - **Calibration file import** via the Storage Access Framework.
 
+## Reference implementation
+
+`RewAudioPlugin.kt` implements the `rew_mobile/audio` channel with the
+simplest-that-can-work path: `AudioRecord` pinned to the USB input via
+`setPreferredDevice()` for capture, and `AudioTrack` (MEDIA usage) for the sweep so it
+routes out wirelessly. Try this before building the libusb driver — many UAC1 mics
+record fine this way. Needs on-device validation.
+
 ## Notes
 
 - Request `android.permission.RECORD_AUDIO` and declare `<uses-feature usb.host>`.

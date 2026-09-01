@@ -59,10 +59,25 @@ them — so the measurement math is verified without a mic or a car.
 
 - [x] **M1 — Core DSP on desktop.** Sweep generation, regularized deconvolution → impulse
       response → frequency response, fractional-octave smoothing, spatial averaging,
-      mic-calibration parse/apply, parametric-EQ auto-fit, crossover summation check,
-      WAV I/O, C ABI. Unit-tested.
-- [ ] **M2 — Flutter app + FFI + one real measurement** through the native audio layer.
-- [ ] **M3 — Guided wizard** (crossovers → EQ) + DSP-entry sheets + project save/report.
+      mic-calibration parse/apply, parametric-EQ auto-fit (with per-band Q estimation),
+      crossover summation check, WAV I/O, C ABI. Unit-tested (34 checks).
+- [x] **Desktop CLI (`tools/rewcli`).** `sweep | measure | eq | xover` over WAV files —
+      exercise the whole pipeline on a desktop/homeserver, cross-check against REW.
+- [x] **Mic calibration + measured crossover recommendation** through the C ABI
+      (`core/ffi`), with tests (43 checks total).
+- [~] **M3 — Guided wizard (Flutter).** Full Dart app written (`app/lib/`): FFI bindings,
+      measurement service, wizard (setup → crossovers → EQ → verify), FR charts,
+      DSP-entry sheets, project save, UMIK-1 calibration loading, measured-crossover
+      suggestions, and pure-Dart unit tests (`app/test/`). Runs against a **mock audio
+      backend** with no hardware. *Not yet compiled — needs the Flutter SDK.*
+- [~] **FFI plugin (`packages/rewcore_ffi`)** that compiles `core/` into the app, and
+      **CI** (`.github/workflows/ci.yml`) building + testing the core on every push.
+- [~] **Native audio layer.** Reference implementations for Android
+      (`android/native/RewAudioPlugin.kt`) and iOS (`ios/native/RewAudioPlugin.swift`),
+      with manifest/Info.plist snippets. *Need on-device validation.*
+- [ ] **Spike #0 — Audio path proof** (do first with hardware): on both OSes,
+      simultaneously play a sweep out wirelessly and capture the UMIK-1 over USB;
+      confirm a clean IR.
 - [ ] **M4 — Field tuning & polish** in the car; compare against a hand-tuned baseline.
-- [ ] **Spike #0 — Audio path proof** (do before M2): on both OSes, simultaneously play a
-      sweep out wirelessly and capture the UMIK-1 over USB; confirm a clean IR.
+
+Legend: [x] built & verified · [~] written, needs hardware/SDK to validate · [ ] to do.

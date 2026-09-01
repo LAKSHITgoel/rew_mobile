@@ -1,0 +1,34 @@
+name: rewcore_ffi
+description: FFI plugin that compiles the rewcore C++ measurement library for each
+  platform and exposes it to the app via dart:ffi.
+version: 0.1.0
+publish_to: "none"
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+
+dev_dependencies:
+  ffigen: ^11.0.0
+
+flutter:
+  plugin:
+    platforms:
+      # An FFI plugin: no Dart platform interface, just native build hooks that
+      # compile rewcore into a loadable library. `ffiPlugin: true` tells Flutter to
+      # build src/CMakeLists.txt (Android/Linux/Windows) or the podspec (iOS/macOS).
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      macos:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true
