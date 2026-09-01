@@ -175,6 +175,50 @@ static void testPeqFitReducesError() {
   CHECK(res.finalErrorDb < 0.6 * res.initialErrorDb);
   std::printf("  initial=%.3f dB rms, final=%.3f dB rms, bands=%zu\n",
               res.initialErrorDb, res.finalErrorDb, res.bands.size());
+
+  // No two bands should stack closer than the minimum spacing.
+  for (std::size_t i = 0; i < res.bands.size(); ++i)
+    for (std::size_t j = i + 1; j < res.bands.size(); ++j)
+      CHECK(std::fabs(std::log2(res.bands[i].freqHz / res.bands[j].freqHz)) >=
+            c.minSpacingOctave - 1e-9);
+}
+
+static void testPeqQEstimation() {
+  std::printf("test: PEQ auto-fit estimates wide vs narrow Q\n");
+  const double fs = 48000;
+  // A wide bass hump (Q 0.7) and a narrow midrange dip (Q 4).
+  std::vector<PeqBand> distortion = {{120.0, 8.0, 0.7}, {5000.0, -8.0, 4.0}};
+  FreqResponse measured;
+  const std::size_t pts = 400;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    measured.freqHz.push_back(f);
+    measured.magDb.push_back(cascadeMagnitudeDb(distortion, f, fs));
+  }
+  PeqConstraints c;
+  c.fs = fs;
+  c.maxBands = 6;
+  const PeqFitResult res = fitPeq(measured, flatTarget(measured), c);
+
+  // Find the fitted band nearest each injected feature and compare their Q.
+  auto nearest = [&](double f) {
+    double bestQ = 0;
+    double bestDist = 1e9;
+    for (const auto& b : res.bands) {
+      const double d = std::fabs(std::log2(b.freqHz / f));
+      if (d < bestDist) {
+        bestDist = d;
+        bestQ = b.q;
+      }
+    }
+    return bestQ;
+  };
+  const double qBass = nearest(120.0);
+  const double qMid = nearest(5000.0);
+  std::printf("  Q near 120Hz hump = %.2f, Q near 5kHz dip = %.2f\n", qBass, qMid);
+  CHECK(qBass < qMid);   // wide feature -> lower Q than narrow feature
 }
 
 static void testCrossoverSummation() {
@@ -239,6 +283,7 @@ int main() {
   testDeconvolutionDelay();
   testDeconvolutionMagnitude();
   testPeqFitReducesError();
+  testPeqQEstimation();
   testCrossoverSummation();
   testCalibration();
   testWavRoundTrip();
