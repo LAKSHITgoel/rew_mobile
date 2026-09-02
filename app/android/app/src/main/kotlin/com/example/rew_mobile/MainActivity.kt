@@ -43,6 +43,9 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickTextFile" -> pickTextFile(result)
+                    // Where saved tunes live. Returned from native so the app
+                    // needs no path_provider dependency.
+                    "appDir" -> result.success(filesDir.absolutePath)
                     else -> result.notImplemented()
                 }
             }

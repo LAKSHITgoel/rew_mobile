@@ -1,5 +1,6 @@
 // Unit tests for the app's pure-Dart logic (no FFI / no platform channels).
 // Run with `flutter test` on a machine with the Flutter SDK.
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -88,14 +89,14 @@ void main() {
 
   group('CarSetup', () {
     test('active front exposes each driver, passive collapses to one', () {
-      final active = const CarSetup(
+      const active = CarSetup(
           front: FrontConfig.twoWayActive,
           rear: RearConfig.none,
           sub: SubConfig.none);
       expect(active.channels.map((c) => c.id),
           containsAll(['fl_tweeter', 'fl_mid', 'fr_tweeter', 'fr_mid']));
 
-      final passive = const CarSetup(
+      const passive = CarSetup(
           front: FrontConfig.twoWayPassive,
           rear: RearConfig.none,
           sub: SubConfig.none);
@@ -105,7 +106,7 @@ void main() {
     });
 
     test('3-way active adds a midbass per side', () {
-      final s = const CarSetup(
+      const s = CarSetup(
           front: FrontConfig.threeWayActive,
           rear: RearConfig.none,
           sub: SubConfig.none);
@@ -224,6 +225,45 @@ void main() {
       expect(back.eqBands['system']!.first.freqHz, 80);
       expect(back.crossovers.first.highPassHz, 2500);
       expect(back.crossovers.first.slope, XoverSlope.linkwitzRiley24);
+    });
+  });
+
+  group('FileProjectStore', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('rew_store'));
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    test('a saved tune survives a brand-new store (i.e. an app restart)', () async {
+      final project = TuneProject(
+        id: 'car1',
+        name: 'My car',
+        createdAt: DateTime(2026, 9, 2),
+        eqBands: {
+          'system': const [PeqBand(freqHz: 64, gainDb: -7.7, q: 1.02)]
+        },
+        delaysMs: {'fl_tweeter': 1.25},
+        levelsDbfs: {'fl_tweeter': -12.5},
+      )..splOffsetDb = 110.0;
+      await FileProjectStore(tmp).save(project);
+
+      // A different instance, as happens on a cold start.
+      final reopened = await FileProjectStore(tmp).list();
+      expect(reopened.length, 1);
+      final p = reopened.single;
+      expect(p.name, 'My car');
+      expect(p.eqBands['system']!.single.freqHz, 64);
+      expect(p.delaysMs['fl_tweeter'], 1.25);
+      expect(p.levelsDbfs['fl_tweeter'], -12.5);
+      expect(p.splOffsetDb, 110.0);
+      expect(p.setup.front, FrontConfig.twoWayActive);
+    });
+
+    test('delete removes it', () async {
+      final store = FileProjectStore(tmp);
+      await store.save(
+          TuneProject(id: 'x', name: 'X', createdAt: DateTime(2026, 1, 1)));
+      await store.delete('x');
+      expect(await store.list(), isEmpty);
     });
   });
 

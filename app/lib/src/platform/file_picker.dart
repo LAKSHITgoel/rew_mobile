@@ -13,4 +13,16 @@ class NativeFilePicker {
   /// implemented (desktop, tests) — callers should fall back to pasting.
   static Future<String?> pickTextFile() =>
       _channel.invokeMethod<String>('pickTextFile');
+
+  /// Directory for saved tunes. Returns null where unimplemented, in which case
+  /// the caller should fall back to in-memory storage.
+  static Future<String?> appDirectory() async {
+    try {
+      return await _channel.invokeMethod<String>('appDir');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
 }
