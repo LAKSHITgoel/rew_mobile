@@ -52,6 +52,15 @@ class WizardController extends ChangeNotifier {
   int eqMaxBands = 10;
   int averagingPositions = 3;
 
+  /// The band to sweep. Set this to the driver under test before measuring —
+  /// a full-range sweep into a tweeter can destroy it.
+  SweepBand band = SweepBand.full;
+
+  void setBand(SweepBand b) {
+    band = b;
+    notifyListeners();
+  }
+
   Future<void> refreshMic() async {
     mic = await service.micStatus();
     notifyListeners();
@@ -75,7 +84,7 @@ class WizardController extends ChangeNotifier {
   /// Measure a single (soloed) driver and compute a crossover recommendation.
   Future<void> runCrossoverMeasurement(String channelId) async {
     await _run('Measuring driver…', () async {
-      final fr = await service.measureOnce();
+      final fr = await service.measureOnce(band: band);
       lastDriverMeasurement = fr;
       lastCrossoverRec = service.recommendCrossover(fr);
       project.measured[channelId] = fr;
@@ -110,8 +119,8 @@ class WizardController extends ChangeNotifier {
   /// target. Stores both on the project under the 'system' key.
   Future<void> runEqMeasurement() async {
     await _run('Measuring system response…', () async {
-      final fr = await service.measureAveraged(averagingPositions);
-      final eq = service.fitEq(fr, maxBands: eqMaxBands);
+      final fr = await service.measureAveraged(averagingPositions, band: band);
+      final eq = service.fitEq(fr, maxBands: eqMaxBands, band: band);
       lastMeasurement = fr;
       lastEq = eq;
       project.measured['system'] = fr;
@@ -124,7 +133,7 @@ class WizardController extends ChangeNotifier {
   /// Verify pass: re-measure and store under 'verify' for before/after compare.
   Future<void> runVerifyMeasurement() async {
     await _run('Verifying…', () async {
-      final fr = await service.measureAveraged(averagingPositions);
+      final fr = await service.measureAveraged(averagingPositions, band: band);
       lastMeasurement = fr;
       project.measured['verify'] = fr;
       await store.save(project);

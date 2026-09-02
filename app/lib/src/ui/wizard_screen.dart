@@ -139,6 +139,39 @@ class _WizardScreenState extends State<WizardScreen> {
     if (text != null && text.trim().isNotEmpty) c.loadCalibration(text);
   }
 
+  /// Band picker. Sweeping only the driver under test is a safety matter, not
+  /// just an accuracy one.
+  Widget _bandSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Sweep band', style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<SweepBand>(
+          value: c.band,
+          isExpanded: true,
+          items: [
+            for (final b in SweepBand.presets)
+              DropdownMenuItem(
+                value: b,
+                child: Text(b.label, style: const TextStyle(fontSize: 13)),
+              ),
+          ],
+          onChanged: (b) => c.setBand(b ?? c.band),
+        ),
+        if (c.band.isFullRange)
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Text(
+              'Full range sends 20 Hz to whatever is soloed. With a tweeter '
+              'soloed, pick the Tweeter band first — a full-range sweep can '
+              'destroy it.',
+              style: TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+          ),
+      ],
+    );
+  }
+
   // ---- Steps --------------------------------------------------------------
 
   Widget _setupStep() {
@@ -222,6 +255,8 @@ class _WizardScreenState extends State<WizardScreen> {
                   'reads its natural roll-off and suggests a crossover.',
                   style: TextStyle(fontSize: 12),
                 ),
+                const SizedBox(height: 8),
+                _bandSelector(),
                 const SizedBox(height: 8),
                 Row(children: [
                   FilledButton.tonalIcon(
@@ -328,6 +363,8 @@ class _WizardScreenState extends State<WizardScreen> {
           const SizedBox(height: 8),
           Text(c.status!, style: Theme.of(context).textTheme.bodySmall),
         ],
+        const SizedBox(height: 8),
+        _bandSelector(),
         const SizedBox(height: 12),
         if (measured != null)
           FrChart(curves: [

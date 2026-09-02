@@ -84,6 +84,22 @@ void main() {
     });
   });
 
+  group('SweepBand', () {
+    test('presets cover the drivers and are ordered low->high', () {
+      expect(SweepBand.presets, contains(SweepBand.tweeter));
+      expect(SweepBand.sub.fHi, lessThan(SweepBand.tweeter.fLo));
+      for (final b in SweepBand.presets) {
+        expect(b.fLo, lessThan(b.fHi));
+      }
+    });
+
+    test('only the full-range band trips the tweeter warning', () {
+      expect(SweepBand.full.isFullRange, isTrue);
+      expect(SweepBand.tweeter.isFullRange, isFalse); // starts at 2 kHz
+      expect(SweepBand.sub.isFullRange, isFalse);     // stops at 200 Hz
+    });
+  });
+
   group('JSON round-trips', () {
     test('FreqResponse', () {
       final fr = FreqResponse([20, 100, 1000], [-1, 0, 2]);

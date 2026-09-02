@@ -50,6 +50,30 @@ class EqResult {
   final double finalErrorDb;
 }
 
+/// A frequency band to sweep and analyse.
+///
+/// Limiting the sweep to the driver under test matters for safety as much as
+/// accuracy: a full-range sweep into a tweeter can destroy it, and sweeping a
+/// sub above its passband just measures the rest of the car.
+class SweepBand {
+  const SweepBand(this.label, this.fLo, this.fHi);
+
+  final String label;
+  final double fLo;
+  final double fHi;
+
+  static const full = SweepBand('Full range · 20 Hz – 20 kHz', 20, 20000);
+  static const sub = SweepBand('Subwoofer · 20 – 200 Hz', 20, 200);
+  static const midbass = SweepBand('Mid / woofer · 50 Hz – 2 kHz', 50, 2000);
+  static const midrange = SweepBand('Midrange · 200 Hz – 5 kHz', 200, 5000);
+  static const tweeter = SweepBand('Tweeter · 2 – 20 kHz', 2000, 20000);
+
+  /// True when the band starts low enough to endanger a tweeter.
+  bool get isFullRange => fLo <= 100 && fHi >= 10000;
+
+  static const presets = <SweepBand>[full, sub, midbass, midrange, tweeter];
+}
+
 /// Suggested crossover edges for one measured driver (from rewcore).
 class CrossoverRecommendation {
   const CrossoverRecommendation({this.highPassHz, this.lowPassHz});

@@ -38,27 +38,38 @@ class MeasurementService {
   /// UMIK-1 calibration applied to every measurement (null = none loaded).
   MicCalibration? calibration;
 
-  Float64List? _sweep;
-  Float64List get sweep =>
-      _sweep ??= _core.generateSweep(
+  // Sweeps are cached per band; regenerating a 3 s sweep on every measurement of
+  // an averaged set would be wasteful.
+  final Map<String, Float64List> _sweeps = {};
+
+  /// The stimulus for [band]. The swept range is deliberately a little wider than
+  /// the analysed range, so the sweep's fade-in/out never lands on a band edge.
+  Float64List sweepFor(SweepBand band) {
+    return _sweeps.putIfAbsent(band.label, () {
+      final f1 = (band.fLo / 1.1).clamp(10.0, config.fs / 2);
+      final f2 = (band.fHi * 1.1).clamp(20.0, config.fs * 0.45);
+      return _core.generateSweep(
         fs: config.fs,
-        f1: config.f1,
-        f2: config.f2,
+        f1: f1,
+        f2: f2,
         durationSec: config.durationSec,
       );
+    });
+  }
 
   Future<MicInfo> micStatus() => _audio.micStatus();
 
-  /// Run a single capture and return its magnitude response.
-  Future<FreqResponse> measureOnce() async {
+  /// Run a single capture over [band] and return its magnitude response.
+  Future<FreqResponse> measureOnce({SweepBand band = SweepBand.full}) async {
+    final stimulus = sweepFor(band);
     final recorded =
-        await _audio.playSweepAndCapture(sweep: sweep, fs: config.fs);
+        await _audio.playSweepAndCapture(sweep: stimulus, fs: config.fs);
     return _core.measureFr(
-      emitted: sweep,
+      emitted: stimulus,
       recorded: recorded,
       fs: config.fs,
-      fMin: config.fMin,
-      fMax: config.fMax,
+      fMin: band.fLo,
+      fMax: band.fHi,
       smoothFrac: config.smoothFrac,
       points: config.points,
       calibration: calibration,
@@ -70,20 +81,22 @@ class MeasurementService {
       _core.recommendCrossover(driver);
 
   /// Run [n] captures (e.g. around the listening position) and power-average them.
-  Future<FreqResponse> measureAveraged(int n) async {
+  Future<FreqResponse> measureAveraged(int n,
+      {SweepBand band = SweepBand.full}) async {
     final all = <FreqResponse>[];
     for (var i = 0; i < n; i++) {
-      all.add(await measureOnce());
+      all.add(await measureOnce(band: band));
     }
     return _powerAverage(all);
   }
 
-  EqResult fitEq(FreqResponse measured, {int maxBands = 10}) {
+  EqResult fitEq(FreqResponse measured,
+      {int maxBands = 10, SweepBand band = SweepBand.full}) {
     return _core.fitPeqFlat(
       measured: measured,
       fs: config.fs,
-      fMin: config.fMin,
-      fMax: config.fMax,
+      fMin: band.fLo,
+      fMax: band.fHi,
       maxBands: maxBands,
     );
   }
