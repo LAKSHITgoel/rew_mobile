@@ -17,7 +17,8 @@ class Rewcore {
 
   /// Opens the native library and resolves symbols. Throws if unavailable
   /// (e.g. running pure-Dart tests without the native lib linked).
-  factory Rewcore.open() => Rewcore._(RewcoreBindings(RewcoreBindings.open()));
+  factory Rewcore.open({String? libraryPath}) =>
+      Rewcore._(RewcoreBindings(RewcoreBindings.open(libraryPath: libraryPath)));
 
   String version() => _b.rewVersion().cast<Utf8>().toDartString();
 

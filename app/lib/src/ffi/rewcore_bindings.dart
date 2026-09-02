@@ -73,7 +73,11 @@ class RewcoreBindings {
 
   /// Opens the rewcore native library for the current platform. The library name
   /// matches the `rewcore_ffi` plugin (see packages/rewcore_ffi).
-  static ffi.DynamicLibrary open() {
+  /// [libraryPath], when given, is opened directly instead of resolving by
+  /// platform. Tests use it to load a locally built dylib, since a plain
+  /// `dart`/`flutter test` process has no rewcore symbols linked in.
+  static ffi.DynamicLibrary open({String? libraryPath}) {
+    if (libraryPath != null) return ffi.DynamicLibrary.open(libraryPath);
     if (Platform.isAndroid || Platform.isLinux) {
       return ffi.DynamicLibrary.open('librewcore_ffi.so');
     }

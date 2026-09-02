@@ -22,3 +22,4 @@ app/ios/Pods/
 .vscode/
 .idea/
 .DS_Store
+build-ffi/
