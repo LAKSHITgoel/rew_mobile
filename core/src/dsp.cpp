@@ -119,18 +119,21 @@ FreqResponse smoothFractionalOctave(const FreqResponse& fr, double fractionOfOct
   const double halfOct = 1.0 / (2.0 * fractionOfOctave);
   const double ratio = std::pow(2.0, halfOct);
 
-  for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
-    const double lo = fr.freqHz[i] / ratio;
-    const double hi = fr.freqHz[i] * ratio;
-    double acc = 0.0;
-    std::size_t cnt = 0;
-    for (std::size_t j = 0; j < fr.freqHz.size(); ++j) {
-      if (fr.freqHz[j] >= lo && fr.freqHz[j] <= hi) {
-        acc += fr.magDb[j];
-        ++cnt;
-      }
-    }
-    out.magDb[i] = cnt ? acc / cnt : fr.magDb[i];
+  // freqHz is ascending and the window bounds (f/ratio, f*ratio) grow monotonically
+  // with i, so the window can slide with two pointers and a running sum: O(n) instead
+  // of the O(n^2) scan this used to do. That matters — a 3 s sweep yields ~260k bins,
+  // where the quadratic version pegged a phone's CPU for minutes.
+  const std::size_t n = fr.freqHz.size();
+  std::size_t lo = 0, hi = 0;
+  double runningSum = 0.0;
+
+  for (std::size_t i = 0; i < n; ++i) {
+    const double loF = fr.freqHz[i] / ratio;
+    const double hiF = fr.freqHz[i] * ratio;
+    while (hi < n && fr.freqHz[hi] <= hiF) runningSum += fr.magDb[hi++];
+    while (lo < hi && fr.freqHz[lo] < loF) runningSum -= fr.magDb[lo++];
+    const std::size_t cnt = hi - lo;
+    out.magDb[i] = cnt ? runningSum / static_cast<double>(cnt) : fr.magDb[i];
   }
   return out;
 }

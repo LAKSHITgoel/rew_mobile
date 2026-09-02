@@ -234,6 +234,49 @@ static void testCrossoverSummation() {
              -6.0206, 0.01);
 }
 
+static void testSmoothingMatchesReference() {
+  std::printf("test: fractional-octave smoothing matches a naive reference\n");
+  // The shipped smoother slides a window with a running sum (O(n)); this checks it
+  // against the obvious O(n^2) definition so the optimization can't drift.
+  FreqResponse fr;
+  const std::size_t pts = 400;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    fr.freqHz.push_back(f);
+    // A wiggly curve so the window content actually varies.
+    fr.magDb.push_back(3.0 * std::sin(i * 0.35) + 0.01 * i);
+  }
+
+  const double frac = 24.0;
+  const FreqResponse fast = smoothFractionalOctave(fr, frac);
+
+  const double ratio = std::pow(2.0, 1.0 / (2.0 * frac));
+  double worst = 0.0;
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double lo = fr.freqHz[i] / ratio, hi = fr.freqHz[i] * ratio;
+    double acc = 0.0;
+    std::size_t cnt = 0;
+    for (std::size_t j = 0; j < pts; ++j) {
+      if (fr.freqHz[j] >= lo && fr.freqHz[j] <= hi) {
+        acc += fr.magDb[j];
+        ++cnt;
+      }
+    }
+    const double ref = cnt ? acc / cnt : fr.magDb[i];
+    worst = std::max(worst, std::fabs(ref - fast.magDb[i]));
+  }
+  std::printf("  worst deviation from reference: %.3g dB\n", worst);
+  CHECK(worst < 1e-9);
+
+  // A flat input must stay flat.
+  FreqResponse flat = fr;
+  for (auto& m : flat.magDb) m = -3.0;
+  const FreqResponse sm = smoothFractionalOctave(flat, frac);
+  for (std::size_t i = 0; i < pts; ++i) CHECK_NEAR(sm.magDb[i], -3.0, 1e-9);
+}
+
 static void testRecommendCrossover() {
   std::printf("test: measured crossover recommendation\n");
   // Synthesize a band-limited driver: high-passed at 500 Hz, low-passed at 5000 Hz.
@@ -359,6 +402,7 @@ int main() {
   testPeqFitReducesError();
   testPeqQEstimation();
   testCrossoverSummation();
+  testSmoothingMatchesReference();
   testRecommendCrossover();
   testFfiCalibration();
   testFfiPeqErrorOut();
