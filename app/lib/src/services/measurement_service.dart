@@ -12,8 +12,11 @@ import '../models/mic_calibration.dart';
 class MeasurementConfig {
   const MeasurementConfig({
     this.fs = 48000,
-    this.f1 = 20,
-    this.f2 = 20000,
+    // Sweep slightly WIDER than the analysed band: the sweep's fade in/out kills
+    // energy at its own extremes, so if f1/f2 equalled fMin/fMax the response at the
+    // band edges would be a fade artifact rather than a measurement.
+    this.f1 = 18,
+    this.f2 = 22000,
     this.durationSec = 3,
     this.fMin = 20,
     this.fMax = 20000,
