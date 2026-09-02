@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/measurement.dart';
 import '../models/project.dart';
 import '../services/crossover_calc.dart';
+import '../platform/file_picker.dart';
 import '../services/dsp_math.dart';
 import '../wizard/wizard_controller.dart';
 import 'dsp_entry_sheet.dart';
@@ -85,6 +87,28 @@ class _WizardScreenState extends State<WizardScreen> {
     }
   }
 
+  /// Prefer the real document picker; a UMIK-1 cal file is ~600 lines, which
+  /// nobody is going to paste on a phone. Falls back to pasting where no picker
+  /// exists (desktop / tests).
+  Future<void> _loadCalibration() async {
+    try {
+      final text = await NativeFilePicker.pickTextFile();
+      if (text != null && text.trim().isNotEmpty) {
+        c.loadCalibration(text);
+      }
+      return; // picked or cancelled — either way, don't fall through
+    } on MissingPluginException {
+      // no native picker on this platform; fall through to paste
+    } on PlatformException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open file: ${e.message}')));
+      }
+      return;
+    }
+    await _pasteCalibration();
+  }
+
   Future<void> _pasteCalibration() async {
     final ctrl = TextEditingController();
     final text = await showDialog<String>(
@@ -143,10 +167,10 @@ class _WizardScreenState extends State<WizardScreen> {
                 ? 'Calibration loaded'
                 : 'Load UMIK-1 calibration'),
             subtitle: Text(c.calibrationSummary ??
-                'Paste your mic\'s calibration .txt so measurements reflect the '
+                'Load your mic\'s calibration .txt so measurements reflect the '
                     'speakers, not the mic.'),
             trailing: TextButton(
-              onPressed: _pasteCalibration,
+              onPressed: _loadCalibration,
               child: Text(c.hasCalibration ? 'Replace' : 'Load'),
             ),
           ),
