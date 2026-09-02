@@ -20,7 +20,10 @@ MicCalibration parseMicCalibration(const std::string& text) {
     if (start == std::string::npos) continue;
     const std::string trimmed = line.substr(start);
 
-    if (trimmed[0] == '*' || trimmed[0] == '#' || trimmed[0] == ';') {
+    // miniDSP ships the real UMIK-1 file with a quoted header rather than a
+    // comment marker, e.g.  "Sens Factor =-0.989dB, SERNO: 7165152"
+    if (trimmed[0] == '*' || trimmed[0] == '#' || trimmed[0] == ';' ||
+        trimmed[0] == '"') {
       // Look for the sensitivity header, e.g. "Sens Factor =-1.234dB".
       const std::size_t pos = trimmed.find("Sens Factor");
       if (pos != std::string::npos) {

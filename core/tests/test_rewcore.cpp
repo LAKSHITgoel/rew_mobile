@@ -350,6 +350,54 @@ static void testFfiPeqErrorOut() {
   CHECK(err[1] < err[0]);       // EQ reduced it
 }
 
+static void testCalibrationRealUmikFormat() {
+  std::printf("test: parses the real miniDSP UMIK-1 file header\n");
+  // miniDSP ships a quoted header rather than a comment marker; we used to miss
+  // the sensitivity because we only scanned '*'/'#'/';' lines.
+  const std::string text =
+      "\"Sens Factor =-0.989dB, SERNO: 7165152\"\n"
+      "10.054\t-4.3217\n"
+      "1000.000\t0.0000\n"
+      "20000.000\t-2.5000\n";
+  const MicCalibration cal = parseMicCalibration(text);
+  CHECK(cal.freqHz.size() == 3);
+  CHECK(cal.hasSensitivity);
+  CHECK_NEAR(cal.sensitivityDbFs, -0.989, 1e-9);
+  CHECK_NEAR(cal.gainDb[0], -4.3217, 1e-9);
+}
+
+static void testPeqDoesNotBoostDeadBand() {
+  std::printf("test: PEQ never boosts where the driver has no output\n");
+  const double fs = 48000;
+  // A driver with a steep roll-off below 100 Hz plus a genuine +6 dB peak at 1 kHz.
+  FreqResponse fr;
+  const std::size_t pts = 300;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    const double hp = highpassMagnitude(f, 100.0, Slope::LinkwitzRiley48);
+    fr.freqHz.push_back(f);
+    fr.magDb.push_back(20.0 * std::log10(hp > 1e-9 ? hp : 1e-9) +
+                       makePeaking(1000.0, fs, 6.0, 2.0).magnitudeDb(f, fs));
+  }
+
+  PeqConstraints c;
+  c.fs = fs;
+  c.maxBands = 10;
+  const PeqFitResult res = fitPeq(fr, flatTarget(fr), c);
+
+  bool cutNear1k = false;
+  for (const auto& b : res.bands) {
+    // Nothing may be boosted down in the dead band.
+    if (b.freqHz < 80.0) CHECK(b.gainDb <= 0.0);
+    if (std::fabs(std::log2(b.freqHz / 1000.0)) < 0.5 && b.gainDb < 0) cutNear1k = true;
+  }
+  std::printf("  %zu bands; legit 1 kHz cut present: %s\n", res.bands.size(),
+              cutNear1k ? "yes" : "no");
+  CHECK(cutNear1k);  // the real in-band problem is still corrected
+}
+
 static void testCalibration() {
   std::printf("test: mic calibration parse & apply\n");
   const std::string text =
@@ -406,6 +454,8 @@ int main() {
   testRecommendCrossover();
   testFfiCalibration();
   testFfiPeqErrorOut();
+  testCalibrationRealUmikFormat();
+  testPeqDoesNotBoostDeadBand();
   testCalibration();
   testWavRoundTrip();
 

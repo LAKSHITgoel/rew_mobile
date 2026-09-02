@@ -66,6 +66,17 @@ void main() {
       expect(cal.gainDb.last, closeTo(-2.0, 1e-9));
     });
 
+    test('parses the real miniDSP quoted header', () {
+      // Real UMIK-1 files start with a quoted header, not a comment marker.
+      final cal = MicCalibration.parse(
+          '"Sens Factor =-0.989dB, SERNO: 7165152"\n'
+          '10.054\t-4.3217\n'
+          '1000.000\t0.0000\n');
+      expect(cal.freqHz.length, 2);
+      expect(cal.sensitivityDbFs, closeTo(-0.989, 1e-9));
+      expect(cal.gainDb.first, closeTo(-4.3217, 1e-9));
+    });
+
     test('handles comma separators and comments', () {
       final cal = MicCalibration.parse('# header\n20,0.5\n1000,1.0\n');
       expect(cal.freqHz, [20, 1000]);

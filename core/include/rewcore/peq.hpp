@@ -31,6 +31,11 @@ struct PeqConstraints {
   double minSpacingOctave = 0.15; // don't stack two bands closer than this
   double edgeGuardOctave = 0.2;   // ignore corrections within this of fMin/fMax
                                   // (the sweep's extreme edges are low-confidence)
+  // Never BOOST where the driver has essentially no output: if the measured level
+  // sits more than this far below the passband, a boost is trying to resurrect
+  // something that isn't there — it burns amplifier headroom and can wreck drivers.
+  // Cuts are always allowed. Set very large to disable the guard.
+  double maxBoostBelowPassbandDb = 10.0;
 };
 
 struct PeqFitResult {

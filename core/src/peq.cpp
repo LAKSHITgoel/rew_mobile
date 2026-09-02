@@ -94,6 +94,29 @@ double estimateQ(const FreqResponse& r, const TargetCurve& t, std::size_t i0,
 
 }  // namespace
 
+namespace {
+
+// Passband reference: the median of the loudest quarter of the in-band response.
+// Robust to a single narrow peak, and to the deep nulls we must not try to fill.
+double passbandReferenceDb(const FreqResponse& fr, double fLo, double fHi) {
+  std::vector<double> inBand;
+  for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
+    if (fr.freqHz[i] >= fLo && fr.freqHz[i] <= fHi) inBand.push_back(fr.magDb[i]);
+  }
+  if (inBand.empty()) return 0.0;
+  std::sort(inBand.begin(), inBand.end());
+  const std::size_t start = inBand.size() * 3 / 4;
+  double acc = 0.0;
+  std::size_t cnt = 0;
+  for (std::size_t i = start; i < inBand.size(); ++i) {
+    acc += inBand[i];
+    ++cnt;
+  }
+  return cnt ? acc / cnt : inBand.back();
+}
+
+}  // namespace
+
 PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
                     const PeqConstraints& c) {
   PeqFitResult result;
@@ -106,6 +129,11 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
 
   FreqResponse current = levelAlign(measured, target, fLo, fHi);
   result.initialErrorDb = rmsErrorDb(current, target, fLo, fHi);
+
+  // Where the driver actually produces output. Below this floor we may cut but
+  // never boost (see PeqConstraints::maxBoostBelowPassbandDb).
+  const double passbandDb = passbandReferenceDb(current, fLo, fHi);
+  const double boostFloorDb = passbandDb - c.maxBoostBelowPassbandDb;
 
   std::vector<double> centers;  // placed band centers, for anti-stacking
 
@@ -127,6 +155,8 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
       if (tooClose) continue;
 
       const double dev = current.magDb[i] - target.magDb[i];
+      // dev < 0 means we'd be boosting here; refuse if there is nothing to boost.
+      if (dev < 0.0 && current.magDb[i] < boostFloorDb) continue;
       if (std::fabs(dev) > std::fabs(worstDev)) {
         worstDev = dev;
         worstIdx = i;

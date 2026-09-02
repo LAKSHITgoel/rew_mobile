@@ -24,7 +24,9 @@ class MicCalibration {
       final line = raw.replaceAll(',', ' ').trim();
       if (line.isEmpty) continue;
       final c = line[0];
-      if (c == '*' || c == '#' || c == ';') {
+      // The real miniDSP file uses a quoted header, not a comment marker:
+      //   "Sens Factor =-0.989dB, SERNO: 7165152"
+      if (c == '*' || c == '#' || c == ';' || c == '"') {
         final idx = line.indexOf('Sens Factor');
         if (idx >= 0) {
           final eq = line.indexOf('=', idx);
