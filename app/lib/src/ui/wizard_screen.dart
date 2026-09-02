@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/car_setup.dart';
 import '../models/measurement.dart';
 import '../models/project.dart';
 import '../services/crossover_calc.dart';
@@ -75,6 +76,8 @@ class _WizardScreenState extends State<WizardScreen> {
 
   Widget _stepBody() {
     switch (c.step) {
+      case WizardStep.system:
+        return _systemStep();
       case WizardStep.setup:
         return _setupStep();
       case WizardStep.crossovers:
@@ -214,6 +217,52 @@ class _WizardScreenState extends State<WizardScreen> {
     if (band != null) c.setBand(band);
   }
 
+  /// One-time absolute-SPL calibration. The mic's own sensitivity can't give
+  /// this on a phone (the USB/Android capture gain is unknown), so we calibrate
+  /// against whatever reference meter the user has.
+  Future<void> _calibrateSpl() async {
+    final ctl = TextEditingController();
+    final spl = await showDialog<double>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Calibrate SPL'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Play a steady signal, hold a reference SPL meter (or a phone SPL '
+              'app) right next to the measurement mic, and type its reading. '
+              'Only needed for absolute numbers — matching drivers to each other '
+              'works without it.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctl,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              decoration: const InputDecoration(
+                  labelText: 'Reference reading',
+                  suffixText: 'dB SPL',
+                  border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, double.tryParse(ctl.text.trim())),
+            child: const Text('Set'),
+          ),
+        ],
+      ),
+    );
+    if (spl != null) c.calibrateSpl(spl);
+  }
+
   /// Live input meter. Showing the mic's *name* only proves it enumerated;
   /// this proves the capture path actually carries audio.
   Widget _micCheckCard() {
@@ -265,6 +314,89 @@ class _WizardScreenState extends State<WizardScreen> {
                       '${ok ? '  ·  signal OK' : '  ·  very quiet'}',
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
             ),
+            if (c.liveSplDb != null)
+              Text('${c.liveSplDb!.toStringAsFixed(1)} dB SPL',
+                  style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Row(children: [
+              TextButton.icon(
+                onPressed: c.monitoringMic ? _calibrateSpl : null,
+                icon: const Icon(Icons.speed, size: 16),
+                label: Text(c.project.splOffsetDb == null
+                    ? 'Calibrate SPL'
+                    : 'Recalibrate SPL'),
+              ),
+              if (c.project.splOffsetDb != null)
+                TextButton(
+                    onPressed: c.clearSplCalibration,
+                    child: const Text('Clear')),
+            ]),
+            Text(
+              c.project.splOffsetDb == null
+                  ? 'Uncalibrated: levels are relative only — still enough to '
+                      'match drivers to each other.'
+                  : 'Offset ${c.project.splOffsetDb!.toStringAsFixed(1)} dB.',
+              style: const TextStyle(fontSize: 11),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Per-channel captured levels. Matching drivers to each other is the point:
+  /// an unmatched pair tilts the summed response before EQ ever gets involved,
+  /// and the differences are exact whether or not SPL has been calibrated.
+  Widget _channelLevelsCard() {
+    final levels = Map<String, double>.from(c.project.levelsDbfs)
+      ..removeWhere((k, _) => k == 'system' || k == 'verify');
+    if (levels.isEmpty) return const SizedBox.shrink();
+
+    final values = levels.values.toList()..sort();
+    final spread = values.last - values.first;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Measured channel levels',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            for (final e in levels.entries)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(children: [
+                  Expanded(
+                      flex: 5,
+                      child: Text(
+                          Channel.defaults
+                              .firstWhere((ch) => ch.id == e.key,
+                                  orElse: () => Channel(e.key, e.key))
+                              .name,
+                          style: const TextStyle(fontSize: 13))),
+                  Expanded(
+                    flex: 4,
+                    child: Text(c.levelLabel(e.key),
+                        style: const TextStyle(
+                            fontFamily: 'monospace', fontSize: 13)),
+                  ),
+                ]),
+              ),
+            if (levels.length > 1) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Spread ${spread.toStringAsFixed(1)} dB — '
+                '${spread <= 1.0 ? 'well matched.' : 'trim channel gains in the '
+                    'DSP until they agree within ~1 dB, then re-measure.'}',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: spread <= 1.0 ? Colors.green : Colors.orange),
+              ),
+            ],
           ],
         ),
       ),
@@ -324,6 +456,106 @@ class _WizardScreenState extends State<WizardScreen> {
   }
 
   // ---- Steps --------------------------------------------------------------
+
+  Widget _systemStep() {
+    final setup = c.setup;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('What is installed?',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 4),
+        Text(
+          'This decides which channels get measured and which sweep each one is '
+          'given. Answer once — the rest of the wizard follows from it.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        _setupDropdown<FrontConfig>(
+          'Front stage',
+          setup.front,
+          FrontConfig.values,
+          (v) => v.label,
+          (v) => c.updateSetup(setup.copyWith(front: v)),
+        ),
+        _setupDropdown<RearConfig>(
+          'Rear speakers',
+          setup.rear,
+          RearConfig.values,
+          (v) => v.label,
+          (v) => c.updateSetup(setup.copyWith(rear: v)),
+        ),
+        _setupDropdown<SubConfig>(
+          'Subwoofer',
+          setup.sub,
+          SubConfig.values,
+          (v) => v.label,
+          (v) => c.updateSetup(setup.copyWith(sub: v)),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Plan',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                for (final n in setup.planNotes)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('• $n', style: const TextStyle(fontSize: 13)),
+                  ),
+                const Divider(),
+                const Text('Channels to measure',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                for (final ch in c.channels)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(children: [
+                      Expanded(flex: 5, child: Text(ch.name,
+                          style: const TextStyle(fontSize: 13))),
+                      Expanded(
+                        flex: 5,
+                        child: Text(CarSetup.bandFor(ch).label,
+                            style: const TextStyle(fontSize: 11)),
+                      ),
+                    ]),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _setupDropdown<T>(String label, T value, List<T> options,
+      String Function(T) labelOf, void Function(T) onPick) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+          DropdownButton<T>(
+            value: value,
+            isExpanded: true,
+            items: [
+              for (final o in options)
+                DropdownMenuItem(
+                    value: o,
+                    child: Text(labelOf(o),
+                        style: const TextStyle(fontSize: 13))),
+            ],
+            onChanged: (v) { if (v != null) onPick(v); },
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _setupStep() {
     final mic = c.mic;
@@ -409,13 +641,31 @@ class _WizardScreenState extends State<WizardScreen> {
                   style: TextStyle(fontSize: 12),
                 ),
                 const SizedBox(height: 8),
+                const Text('Driver under test',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                DropdownButton<String>(
+                  value: c.measuringChannel.id,
+                  isExpanded: true,
+                  items: [
+                    for (final ch in c.channels)
+                      DropdownMenuItem(
+                          value: ch.id,
+                          child: Text(ch.name,
+                              style: const TextStyle(fontSize: 13))),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) c.selectMeasuringChannel(v);
+                  },
+                ),
+                const SizedBox(height: 8),
                 _bandSelector(),
                 const SizedBox(height: 8),
                 Row(children: [
                   FilledButton.tonalIcon(
                     onPressed: c.busy
                         ? null
-                        : () => c.runCrossoverMeasurement('fl_tweeter'),
+                        : () => c.runCrossoverMeasurement(
+                            c.measuringChannel.id),
                     icon: const Icon(Icons.graphic_eq, size: 18),
                     label: const Text('Measure driver'),
                   ),
@@ -424,7 +674,8 @@ class _WizardScreenState extends State<WizardScreen> {
                     Expanded(
                       child: Text(
                         'HPF ${rec.highPassHz?.toStringAsFixed(0) ?? '—'} Hz · '
-                        'LPF ${rec.lowPassHz?.toStringAsFixed(0) ?? '—'} Hz',
+                        'LPF ${rec.lowPassHz?.toStringAsFixed(0) ?? '—'} Hz\n'
+                        'level ${c.levelLabel(c.measuringChannel.id)}',
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
@@ -439,6 +690,8 @@ class _WizardScreenState extends State<WizardScreen> {
             ),
           ),
         ),
+        const SizedBox(height: 8),
+        _channelLevelsCard(),
         const SizedBox(height: 8),
         Text('Crossover: ${_xoverFc.toStringAsFixed(0)} Hz'),
         Slider(
@@ -581,7 +834,7 @@ class _WizardScreenState extends State<WizardScreen> {
         Text('Distance to each driver',
             style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 4),
-        for (final ch in Channel.defaults)
+        for (final ch in c.channels)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(

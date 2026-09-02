@@ -28,6 +28,11 @@ size_t rew_generate_sweep(double fs, double f1, double f2, double durationSec,
   return sweep.size();
 }
 
+double rew_rms_dbfs(const double* samples, size_t n) {
+  if (!samples || n == 0) return -240.0;
+  return rmsDbfs(std::vector<double>(samples, samples + n));
+}
+
 size_t rew_generate_noise(double fs, double durationSec, double fLo, double fHi,
                           double amplitude, unsigned int seed, double* out,
                           size_t cap) {

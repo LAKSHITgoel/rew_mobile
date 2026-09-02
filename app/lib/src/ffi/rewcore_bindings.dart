@@ -16,6 +16,10 @@ typedef _RewGenerateSweepC = ffi.Size Function(
 typedef RewGenerateSweepDart = int Function(
     double, double, double, double, ffi.Pointer<ffi.Double>, int);
 
+// double rew_rms_dbfs(const double* samples, size_t n);
+typedef _RewRmsDbfsC = ffi.Double Function(ffi.Pointer<ffi.Double>, ffi.Size);
+typedef RewRmsDbfsDart = double Function(ffi.Pointer<ffi.Double>, int);
+
 // size_t rew_generate_noise(fs, durationSec, fLo, fHi, amplitude, seed, out*, cap);
 typedef _RewGenerateNoiseC = ffi.Size Function(
     ffi.Double, ffi.Double, ffi.Double, ffi.Double, ffi.Double,
@@ -65,6 +69,8 @@ class RewcoreBindings {
         rewGenerateSweep = lib
             .lookupFunction<_RewGenerateSweepC, RewGenerateSweepDart>(
                 'rew_generate_sweep'),
+        rewRmsDbfs =
+            lib.lookupFunction<_RewRmsDbfsC, RewRmsDbfsDart>('rew_rms_dbfs'),
         rewGenerateNoise =
             lib.lookupFunction<_RewGenerateNoiseC, RewGenerateNoiseDart>(
                 'rew_generate_noise'),
@@ -79,6 +85,7 @@ class RewcoreBindings {
   final RewVersionDart rewVersion;
   final RewGenerateSweepDart rewGenerateSweep;
   final RewGenerateNoiseDart rewGenerateNoise;
+  final RewRmsDbfsDart rewRmsDbfs;
   final RewMeasureFrDart rewMeasureFr;
   final RewFitPeqFlatDart rewFitPeqFlat;
   final RewRecommendCrossoverDart rewRecommendCrossover;

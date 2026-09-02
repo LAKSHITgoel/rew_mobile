@@ -1,5 +1,6 @@
 // A saved car tune: the measurements taken and the settings recommended, so a
 // session can be reopened and compared. JSON-serializable for persistence.
+import 'car_setup.dart';
 import 'measurement.dart';
 
 class CrossoverSetting {
@@ -39,10 +40,14 @@ class TuneProject {
     Map<String, List<PeqBand>>? eqBands,
     List<CrossoverSetting>? crossovers,
     Map<String, double>? delaysMs,
+    Map<String, double>? levelsDbfs,
+    this.splOffsetDb,
+    this.setup = const CarSetup(),
   })  : measured = measured ?? {},
         eqBands = eqBands ?? {},
         crossovers = crossovers ?? [],
-        delaysMs = delaysMs ?? {};
+        delaysMs = delaysMs ?? {},
+        levelsDbfs = levelsDbfs ?? {};
 
   final String id;
   String name;
@@ -59,6 +64,17 @@ class TuneProject {
   /// Manual time-alignment delays per channel id, in milliseconds.
   final Map<String, double> delaysMs;
 
+  /// Captured level per channel id, in dBFS — used to match drivers to each
+  /// other. Becomes dB SPL when [splOffsetDb] is set.
+  final Map<String, double> levelsDbfs;
+
+  /// What is installed in the car; drives which channels get measured.
+  CarSetup setup;
+
+  /// dB to add to a dBFS reading to get dB SPL, from a one-time calibration
+  /// against a reference meter. Null means only relative levels are meaningful.
+  double? splOffsetDb;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -69,6 +85,9 @@ class TuneProject {
             (k, v) => MapEntry(k, v.map((b) => b.toJson()).toList())),
         'crossovers': crossovers.map((c) => c.toJson()).toList(),
         'delaysMs': delaysMs,
+        'levelsDbfs': levelsDbfs,
+        'splOffsetDb': splOffsetDb,
+        'setup': setup.toJson(),
       };
 
   factory TuneProject.fromJson(Map<String, dynamic> j) => TuneProject(
@@ -87,5 +106,10 @@ class TuneProject {
             .toList(),
         delaysMs: ((j['delaysMs'] ?? {}) as Map<String, dynamic>)
             .map((k, v) => MapEntry(k, (v as num).toDouble())),
+        levelsDbfs: ((j['levelsDbfs'] ?? {}) as Map<String, dynamic>)
+            .map((k, v) => MapEntry(k, (v as num).toDouble())),
+        splOffsetDb: (j['splOffsetDb'] as num?)?.toDouble(),
+        setup: CarSetup.fromJson(
+            (j['setup'] as Map<String, dynamic>?) ?? const {}),
       );
 }

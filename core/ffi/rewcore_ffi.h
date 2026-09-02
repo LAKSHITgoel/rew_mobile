@@ -18,6 +18,10 @@ const char* rew_version(void);
 size_t rew_generate_sweep(double fs, double f1, double f2, double durationSec,
                           double* out, size_t cap);
 
+// RMS level of a buffer in dBFS (full-scale sine reads -3.01 dBFS). Add an SPL
+// calibration offset to get dB SPL; relative levels need no offset.
+double rew_rms_dbfs(const double* samples, size_t n);
+
 // Generate one loopable block of pink noise, optionally band-limited to
 // [fLo, fHi] (pass 0 for either to skip that side). Used for judging the centre
 // image by ear during manual time alignment. Call with out=NULL to query length.

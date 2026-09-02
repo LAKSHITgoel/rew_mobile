@@ -98,6 +98,18 @@ void main() {
     expect(plain.magDb[mid] - calibrated.magDb[mid], closeTo(3.0, 0.3));
   });
 
+  test('rew_rms_dbfs matches the -3.01 dBFS full-scale-sine convention', () {
+    final sine = Float64List(4800);
+    for (var i = 0; i < sine.length; i++) {
+      sine[i] = math.sin(2 * math.pi * 100 * i / 48000);
+    }
+    expect(core.rmsDbfs(sine), closeTo(-3.01, 0.02));
+
+    final half = Float64List.fromList(sine.map((v) => v * 0.5).toList());
+    // Level differences are what channel matching relies on.
+    expect(core.rmsDbfs(sine) - core.rmsDbfs(half), closeTo(6.02, 0.02));
+  });
+
   test('rew_fit_peq_flat returns bands and real error metrics (out-params)', () {
     // A bumpy response built from two known features.
     final freq = <double>[], mag = <double>[];

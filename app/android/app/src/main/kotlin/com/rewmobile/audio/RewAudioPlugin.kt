@@ -38,6 +38,8 @@ class RewAudioPlugin(private val context: Context) :
     private var levelSink: EventChannel.EventSink? = null
     @Volatile private var levelRunning = false
     private var levelThread: Thread? = null
+    // Held so stop() can unblock a thread parked in AudioRecord.read().
+    @Volatile private var levelRecord: AudioRecord? = null
 
     // Looped tone/noise playback for manual time alignment.
     @Volatile private var toneRunning = false
@@ -213,6 +215,7 @@ class RewAudioPlugin(private val context: Context) :
             var record: AudioRecord? = null
             try {
                 record = buildRecord(fs, minBuf * 2)
+                levelRecord = record
                 usbInput()?.let { record.preferredDevice = it }
                 record.startRecording()
                 val block = FloatArray(fs / 20)  // ~50 ms
@@ -238,14 +241,20 @@ class RewAudioPlugin(private val context: Context) :
             } finally {
                 runCatching { record?.stop() }
                 runCatching { record?.release() }
+                levelRecord = null
             }
         }
     }
 
     private fun stopInputLevel() {
         levelRunning = false
-        runCatching { levelThread?.join(500) }
+        // read() is blocking, so the thread will not notice levelRunning until it
+        // returns. Stopping the record first unblocks it; without this the join
+        // times out and the next start races a still-live AudioRecord.
+        runCatching { levelRecord?.stop() }
+        runCatching { levelThread?.join(1000) }
         levelThread = null
+        levelRecord = null
     }
 
     /** Loops [samples] out as media until stopTone(); used for centring by ear. */

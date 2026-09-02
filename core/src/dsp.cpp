@@ -35,6 +35,17 @@ std::vector<double> generateExpSweep(const SweepSpec& s) {
   return x;
 }
 
+double rmsDbfs(const std::vector<double>& x) {
+  if (x.empty()) return -240.0;
+  double acc = 0.0;
+  for (double v : x) acc += v * v;
+  const double rms = std::sqrt(acc / static_cast<double>(x.size()));
+  // Plain 20*log10(rms) already gives the convention we want: a full-scale sine
+  // has rms 0.7071, so it reads -3.01 dBFS (not 0), which is how miniDSP quote
+  // the UMIK-1 sensitivity figure.
+  return 20.0 * std::log10(rms > 1e-12 ? rms : 1e-12);
+}
+
 std::vector<double> generatePinkNoise(const NoiseSpec& s) {
   const std::size_t n = static_cast<std::size_t>(s.durationSec * s.fs);
   std::vector<double> x(n, 0.0);

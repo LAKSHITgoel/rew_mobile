@@ -72,12 +72,13 @@ class MeasurementService {
     return _audio.startTone(samples: noise, fs: config.fs);
   }
 
-  /// Run a single capture over [band] and return its magnitude response.
-  Future<FreqResponse> measureOnce({SweepBand band = SweepBand.full}) async {
+  /// Run a single capture over [band]: magnitude response plus captured level.
+  Future<Measurement> measureOnce({SweepBand band = SweepBand.full}) async {
     final stimulus = sweepFor(band);
     final recorded =
         await _audio.playSweepAndCapture(sweep: stimulus, fs: config.fs);
-    return _core.measureFr(
+    final level = _core.rmsDbfs(recorded);
+    final response = _core.measureFr(
       emitted: stimulus,
       recorded: recorded,
       fs: config.fs,
@@ -87,6 +88,7 @@ class MeasurementService {
       points: config.points,
       calibration: calibration,
     );
+    return Measurement(response: response, levelDbfs: level);
   }
 
   /// Recommend crossover edges from a single driver's measured response.
@@ -94,13 +96,17 @@ class MeasurementService {
       _core.recommendCrossover(driver);
 
   /// Run [n] captures (e.g. around the listening position) and power-average them.
-  Future<FreqResponse> measureAveraged(int n,
+  Future<Measurement> measureAveraged(int n,
       {SweepBand band = SweepBand.full}) async {
     final all = <FreqResponse>[];
+    var levelSum = 0.0;
     for (var i = 0; i < n; i++) {
-      all.add(await measureOnce(band: band));
+      final m = await measureOnce(band: band);
+      all.add(m.response);
+      levelSum += m.levelDbfs;
     }
-    return _powerAverage(all);
+    return Measurement(
+        response: _powerAverage(all), levelDbfs: levelSum / n);
   }
 
   EqResult fitEq(FreqResponse measured,

@@ -367,6 +367,29 @@ static double bandLevelDb(const std::vector<double>& x, double fs, double f1,
   return cnt ? 20.0 * std::log10(acc / cnt + 1e-12) : -240.0;
 }
 
+static void testRmsDbfs() {
+  std::printf("test: RMS dBFS convention and SPL offset\n");
+  // A full-scale sine must read -3.01 dBFS (miniDSP's convention), not 0.
+  std::vector<double> sine(4800);
+  for (std::size_t i = 0; i < sine.size(); ++i)
+    sine[i] = std::sin(2.0 * M_PI * 100.0 * i / 48000.0);
+  CHECK_NEAR(rmsDbfs(sine), -3.01, 0.02);
+
+  // Halving amplitude drops the level by 6 dB.
+  std::vector<double> half = sine;
+  for (double& v : half) v *= 0.5;
+  CHECK_NEAR(rmsDbfs(half) - rmsDbfs(sine), -6.02, 0.02);
+
+  // Silence floors out rather than returning -inf.
+  CHECK(rmsDbfs(std::vector<double>(100, 0.0)) < -200.0);
+
+  // The SPL offset is a pure shift, so channel-to-channel DIFFERENCES are
+  // independent of it — which is what level-matching drivers relies on.
+  const double a = rmsDbfs(sine), b = rmsDbfs(half);
+  CHECK_NEAR(splFromDbfs(a, 110.0) - splFromDbfs(b, 110.0), a - b, 1e-12);
+  CHECK_NEAR(splFromDbfs(a, 0.0) - splFromDbfs(b, 0.0), a - b, 1e-12);
+}
+
 static void testPinkNoise() {
   std::printf("test: pink noise slope and band limiting\n");
   NoiseSpec spec;
@@ -503,6 +526,7 @@ int main() {
   testRecommendCrossover();
   testFfiCalibration();
   testFfiPeqErrorOut();
+  testRmsDbfs();
   testPinkNoise();
   testCalibrationRealUmikFormat();
   testPeqDoesNotBoostDeadBand();

@@ -39,6 +39,18 @@ class Rewcore {
     }
   }
 
+  /// RMS level of a captured buffer in dBFS (full-scale sine = -3.01 dBFS).
+  double rmsDbfs(Float64List samples) {
+    if (samples.isEmpty) return -240;
+    final buf = calloc<ffi.Double>(samples.length);
+    try {
+      buf.asTypedList(samples.length).setAll(0, samples);
+      return _b.rewRmsDbfs(buf, samples.length);
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
   /// One loopable block of pink noise, optionally band-limited. Used as the
   /// centring signal for manual time alignment.
   Float64List generateNoise({

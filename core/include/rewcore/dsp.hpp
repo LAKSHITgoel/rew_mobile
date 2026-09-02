@@ -37,6 +37,22 @@ struct NoiseSpec {
 // roughly 200 Hz - 4 kHz concentrates it where human localisation is sharpest.
 std::vector<double> generatePinkNoise(const NoiseSpec& spec);
 
+// ---- Levels ---------------------------------------------------------------
+
+// RMS level of a buffer in dBFS, using the convention that a full-scale SINE
+// reads -3.01 dBFS (i.e. dBFS is referenced to a full-scale square). This is the
+// same convention miniDSP use for the UMIK-1 sensitivity figure.
+double rmsDbfs(const std::vector<double>& x);
+
+// Convert a measured dBFS level to dB SPL given a calibration offset.
+//
+// The offset cannot be derived from the mic's sensitivity alone on a phone: the
+// capture gain of the USB/Android path is not known (the UMIK-1 even advertises
+// its own "Gain: 18dB"), so absolute SPL needs a one-time calibration against a
+// reference meter. RELATIVE levels between channels are exact without it, which
+// is what level-matching drivers actually needs.
+inline double splFromDbfs(double dbfs, double offsetDb) { return dbfs + offsetDb; }
+
 // ---- Measurement ----------------------------------------------------------
 
 // Regularized deconvolution of a recorded signal by the emitted stimulus, in the

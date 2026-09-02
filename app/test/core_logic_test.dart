@@ -3,6 +3,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rew_mobile/src/models/car_setup.dart';
 import 'package:rew_mobile/src/models/measurement.dart';
 import 'package:rew_mobile/src/models/mic_calibration.dart';
 import 'package:rew_mobile/src/models/project.dart';
@@ -82,6 +83,73 @@ void main() {
       final cal = MicCalibration.parse('# header\n20,0.5\n1000,1.0\n');
       expect(cal.freqHz, [20, 1000]);
       expect(cal.gainDb, [0.5, 1.0]);
+    });
+  });
+
+  group('CarSetup', () {
+    test('active front exposes each driver, passive collapses to one', () {
+      final active = const CarSetup(
+          front: FrontConfig.twoWayActive,
+          rear: RearConfig.none,
+          sub: SubConfig.none);
+      expect(active.channels.map((c) => c.id),
+          containsAll(['fl_tweeter', 'fl_mid', 'fr_tweeter', 'fr_mid']));
+
+      final passive = const CarSetup(
+          front: FrontConfig.twoWayPassive,
+          rear: RearConfig.none,
+          sub: SubConfig.none);
+      // One controllable channel per side, not two.
+      expect(passive.channels.length, 2);
+      expect(passive.channels.map((c) => c.id), ['fl', 'fr']);
+    });
+
+    test('3-way active adds a midbass per side', () {
+      final s = const CarSetup(
+          front: FrontConfig.threeWayActive,
+          rear: RearConfig.none,
+          sub: SubConfig.none);
+      expect(s.channels.length, 6);
+      expect(s.channels.where((c) => c.role == DriverRole.midbass).length, 2);
+    });
+
+    test('rear and sub options change the channel list', () {
+      expect(
+          const CarSetup(rear: RearConfig.none, sub: SubConfig.none)
+              .channels
+              .any((c) => c.id.startsWith('r')),
+          isFalse);
+      expect(
+          const CarSetup(sub: SubConfig.stereo)
+              .channels
+              .where((c) => c.role == DriverRole.sub)
+              .length,
+          2);
+    });
+
+    test('a tweeter never gets a full-range sweep', () {
+      const tweeter = Channel('t', 'T', DriverRole.tweeter);
+      const sub = Channel('s', 'S', DriverRole.sub);
+      expect(CarSetup.bandFor(tweeter).fLo, greaterThanOrEqualTo(2000));
+      expect(CarSetup.bandFor(tweeter).isFullRange, isFalse);
+      expect(CarSetup.bandFor(sub).fHi, lessThanOrEqualTo(200));
+    });
+
+    test('plan explains the passive limitation', () {
+      final notes =
+          const CarSetup(front: FrontConfig.twoWayPassive).planNotes.join(' ');
+      expect(notes.toLowerCase(), contains('passive'));
+    });
+
+    test('round-trips through JSON', () {
+      const s = CarSetup(
+          front: FrontConfig.threeWayActive,
+          rear: RearConfig.twoWayActive,
+          sub: SubConfig.stereo);
+      final back = CarSetup.fromJson(s.toJson());
+      expect(back.front, s.front);
+      expect(back.rear, s.rear);
+      expect(back.sub, s.sub);
     });
   });
 

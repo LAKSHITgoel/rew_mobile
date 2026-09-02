@@ -20,6 +20,17 @@ class FreqResponse {
       );
 }
 
+/// A capture: its magnitude response plus how loud it actually was.
+///
+/// The level is what lets you match drivers to each other and confirm you
+/// measured at a sane volume; it is dBFS, which becomes dB SPL once an offset
+/// has been calibrated (differences between channels need no offset at all).
+class Measurement {
+  const Measurement({required this.response, required this.levelDbfs});
+  final FreqResponse response;
+  final double levelDbfs;
+}
+
 /// One parametric EQ band, as entered into the DSP's own app.
 class PeqBand {
   const PeqBand({required this.freqHz, required this.gainDb, required this.q});
@@ -105,19 +116,26 @@ extension XoverSlopeLabel on XoverSlope {
       };
 }
 
+/// What a driver is for. Decides the sweep band it may safely be given.
+enum DriverRole { tweeter, midrange, midbass, fullRange, sub }
+
 /// A speaker channel in the car, isolated (soloed in the DSP app) for measuring.
+/// One Channel == one thing the DSP can control on its own.
 class Channel {
-  const Channel(this.id, this.name);
+  const Channel(this.id, this.name, [this.role = DriverRole.fullRange]);
   final String id;
   final String name;
+  final DriverRole role;
 
+  /// Fallback list used only to look up a display name for an id that is not in
+  /// the current system setup (e.g. an old saved project).
   static const List<Channel> defaults = [
-    Channel('fl_tweeter', 'Front L Tweeter'),
-    Channel('fl_mid', 'Front L Midrange'),
-    Channel('fr_tweeter', 'Front R Tweeter'),
-    Channel('fr_mid', 'Front R Midrange'),
-    Channel('rl', 'Rear L (coax)'),
-    Channel('rr', 'Rear R (coax)'),
-    Channel('sub', 'Subwoofer'),
+    Channel('fl_tweeter', 'Front L Tweeter', DriverRole.tweeter),
+    Channel('fl_mid', 'Front L Midrange', DriverRole.midrange),
+    Channel('fr_tweeter', 'Front R Tweeter', DriverRole.tweeter),
+    Channel('fr_mid', 'Front R Midrange', DriverRole.midrange),
+    Channel('rl', 'Rear L', DriverRole.fullRange),
+    Channel('rr', 'Rear R', DriverRole.fullRange),
+    Channel('sub', 'Subwoofer', DriverRole.sub),
   ];
 }

@@ -8,15 +8,17 @@ import 'package:flutter/foundation.dart';
 import '../audio/audio_backend.dart';
 import '../models/measurement.dart';
 import '../models/mic_calibration.dart';
+import '../models/car_setup.dart';
 import '../models/project.dart';
 import '../services/measurement_service.dart';
 import '../services/time_align.dart';
 import '../services/project_store.dart';
 
-enum WizardStep { setup, crossovers, timeAlignment, eq, verify, done }
+enum WizardStep { system, setup, crossovers, timeAlignment, eq, verify, done }
 
 extension WizardStepInfo on WizardStep {
   String get title => switch (this) {
+        WizardStep.system => 'System',
         WizardStep.setup => 'Setup & level check',
         WizardStep.crossovers => 'Crossovers',
         WizardStep.timeAlignment => 'Time alignment',
@@ -37,7 +39,7 @@ class WizardController extends ChangeNotifier {
   final ProjectStore store;
   final TuneProject project;
 
-  WizardStep step = WizardStep.setup;
+  WizardStep step = WizardStep.system;
   bool busy = false;
   String? status;
   MicInfo? mic;
@@ -58,19 +60,40 @@ class WizardController extends ChangeNotifier {
   /// Starts/stops the input meter. Tapping the mic should visibly move it —
   /// that is the only proof the capture path really works before a sweep.
   Future<void> toggleMicMonitor() async {
+    // Flip the flag first and notify, so the button always reflects the tap even
+    // if the platform call is slow — and so a failure can flip it back rather
+    // than leaving the UI and the recorder disagreeing.
     if (monitoringMic) {
       monitoringMic = false;
+      micLevel = null;
+      notifyListeners();
       await _levelSub?.cancel();
       _levelSub = null;
-      micLevel = null;
-      await service.stopInputLevel();
+      try {
+        await service.stopInputLevel();
+      } catch (e) {
+        status = 'Could not stop the mic meter: $e';
+      }
     } else {
-      _levelSub = service.inputLevels.listen((l) {
-        micLevel = l;
-        notifyListeners();
-      });
-      await service.startInputLevel();
       monitoringMic = true;
+      notifyListeners();
+      try {
+        _levelSub = service.inputLevels.listen(
+          (l) {
+            micLevel = l;
+            notifyListeners();
+          },
+          onError: (Object e) {
+            status = 'Mic meter error: $e';
+            monitoringMic = false;
+            notifyListeners();
+          },
+        );
+        await service.startInputLevel();
+      } catch (e) {
+        status = 'Could not start the mic meter: $e';
+        monitoringMic = false;
+      }
     }
     notifyListeners();
   }
@@ -118,6 +141,73 @@ class WizardController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- SPL ------------------------------------------------------------------
+  /// Latest live level while the meter runs, as SPL when calibrated.
+  double? get liveSplDb => (micLevel == null || project.splOffsetDb == null)
+      ? null
+      : micLevel!.rmsDb + project.splOffsetDb!;
+
+  /// Calibrate absolute SPL: the user reads a reference meter while the
+  /// centring noise plays and types that number in. Relative comparisons
+  /// between channels work without this.
+  void calibrateSpl(double referenceSpl) {
+    final lvl = micLevel;
+    if (lvl == null) {
+      status = 'Start the mic meter first, then calibrate.';
+    } else {
+      project.splOffsetDb = referenceSpl - lvl.rmsDb;
+      store.save(project);
+      status = 'SPL calibrated: offset '
+          '${project.splOffsetDb!.toStringAsFixed(1)} dB.';
+    }
+    notifyListeners();
+  }
+
+  void clearSplCalibration() {
+    project.splOffsetDb = null;
+    store.save(project);
+    notifyListeners();
+  }
+
+  /// A channel's captured level, as SPL when calibrated else dBFS.
+  String levelLabel(String channelId) {
+    final l = project.levelsDbfs[channelId];
+    if (l == null) return '—';
+    final off = project.splOffsetDb;
+    return off == null
+        ? '${l.toStringAsFixed(1)} dBFS'
+        : '${(l + off).toStringAsFixed(1)} dB SPL';
+  }
+
+  // --- installed system ------------------------------------------------------
+  CarSetup get setup => project.setup;
+
+  /// Channels this system actually exposes to the DSP.
+  List<Channel> get channels => setup.channels;
+
+  /// Which driver is currently soloed for measurement.
+  String? _measuringChannelId;
+  Channel get measuringChannel {
+    final list = channels;
+    if (list.isEmpty) return const Channel('system', 'System');
+    return list.firstWhere((c) => c.id == _measuringChannelId,
+        orElse: () => list.first);
+  }
+
+  /// Picking a driver also picks a safe sweep band for it — you should never
+  /// hand a tweeter a full-range sweep.
+  void selectMeasuringChannel(String id) {
+    _measuringChannelId = id;
+    band = CarSetup.bandFor(measuringChannel);
+    notifyListeners();
+  }
+
+  void updateSetup(CarSetup s) {
+    project.setup = s;
+    store.save(project);
+    notifyListeners();
+  }
+
   bool get hasCalibration => service.calibration != null;
   String? calibrationSummary;
 
@@ -156,10 +246,12 @@ class WizardController extends ChangeNotifier {
   /// Measure a single (soloed) driver and compute a crossover recommendation.
   Future<void> runCrossoverMeasurement(String channelId) async {
     await _run('Measuring driver…', () async {
-      final fr = await service.measureOnce(band: band);
+      final m = await service.measureOnce(band: band);
+      final fr = m.response;
       lastDriverMeasurement = fr;
       lastCrossoverRec = service.recommendCrossover(fr);
       project.measured[channelId] = fr;
+      project.levelsDbfs[channelId] = m.levelDbfs;
       await store.save(project);
       final r = lastCrossoverRec!;
       status = 'Suggested '
@@ -191,11 +283,13 @@ class WizardController extends ChangeNotifier {
   /// target. Stores both on the project under the 'system' key.
   Future<void> runEqMeasurement() async {
     await _run('Measuring system response…', () async {
-      final fr = await service.measureAveraged(averagingPositions, band: band);
+      final m = await service.measureAveraged(averagingPositions, band: band);
+      final fr = m.response;
       final eq = service.fitEq(fr, maxBands: eqMaxBands, band: band);
       lastMeasurement = fr;
       lastEq = eq;
       project.measured['system'] = fr;
+      project.levelsDbfs['system'] = m.levelDbfs;
       project.eqBands['system'] = eq.bands;
       await store.save(project);
       status = 'Measured ${fr.length} points; ${eq.bands.length} EQ bands.';
@@ -205,9 +299,10 @@ class WizardController extends ChangeNotifier {
   /// Verify pass: re-measure and store under 'verify' for before/after compare.
   Future<void> runVerifyMeasurement() async {
     await _run('Verifying…', () async {
-      final fr = await service.measureAveraged(averagingPositions, band: band);
-      lastMeasurement = fr;
-      project.measured['verify'] = fr;
+      final m = await service.measureAveraged(averagingPositions, band: band);
+      lastMeasurement = m.response;
+      project.measured['verify'] = m.response;
+      project.levelsDbfs['verify'] = m.levelDbfs;
       await store.save(project);
       status = 'Verify measurement saved.';
     });
