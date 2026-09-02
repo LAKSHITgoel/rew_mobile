@@ -18,6 +18,25 @@ struct SweepSpec {
 // Exponential (log) sine sweep, a.k.a. Farina sweep, for the measurement stimulus.
 std::vector<double> generateExpSweep(const SweepSpec& spec);
 
+// ---- Test signals (manual time alignment / centring by ear) ---------------
+
+struct NoiseSpec {
+  double fs = 48000.0;
+  double durationSec = 2.0;  // one loopable block
+  double fLo = 0.0;          // high-pass edge; 0 = none
+  double fHi = 0.0;          // low-pass edge; 0 = none
+  double amplitude = 0.3;
+  unsigned seed = 1;
+};
+
+// Pink noise (-3 dB/octave), optionally band-limited.
+//
+// Pink is the standard signal for judging a centre image by ear: unlike a sine
+// it gives the ear broadband localisation cues, and unlike white noise it is not
+// so treble-heavy that it fatigues or over-weights the tweeters. Band-limiting to
+// roughly 200 Hz - 4 kHz concentrates it where human localisation is sharpest.
+std::vector<double> generatePinkNoise(const NoiseSpec& spec);
+
 // ---- Measurement ----------------------------------------------------------
 
 // Regularized deconvolution of a recorded signal by the emitted stimulus, in the

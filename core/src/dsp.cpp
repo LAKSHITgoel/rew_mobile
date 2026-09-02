@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include "rewcore/biquad.hpp"
 #include "rewcore/fft.hpp"
+
+#include <random>
 
 namespace rewcore {
 
@@ -26,6 +29,70 @@ std::vector<double> generateExpSweep(const SweepSpec& s) {
       static_cast<std::size_t>(s.fadeSec * s.fs), n / 2);
   for (std::size_t i = 0; i < fade; ++i) {
     const double w = 0.5 * (1.0 - std::cos(M_PI * i / fade));
+    x[i] *= w;
+    x[n - 1 - i] *= w;
+  }
+  return x;
+}
+
+std::vector<double> generatePinkNoise(const NoiseSpec& s) {
+  const std::size_t n = static_cast<std::size_t>(s.durationSec * s.fs);
+  std::vector<double> x(n, 0.0);
+  if (n == 0) return x;
+
+  // Deterministic so a given band always sounds identical between runs.
+  std::mt19937 rng(s.seed);
+  std::uniform_real_distribution<double> uni(-1.0, 1.0);
+
+  // Paul Kellet's economy pink filter: a bank of one-pole sections whose sum
+  // approximates a -3 dB/octave slope across the audio band.
+  double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const double w = uni(rng);
+    b0 = 0.99886 * b0 + w * 0.0555179;
+    b1 = 0.99332 * b1 + w * 0.0750759;
+    b2 = 0.96900 * b2 + w * 0.1538520;
+    b3 = 0.86650 * b3 + w * 0.3104856;
+    b4 = 0.55000 * b4 + w * 0.5329522;
+    b5 = -0.7616 * b5 - w * 0.0168980;
+    x[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362;
+    b6 = w * 0.115926;
+  }
+
+  // Optional band limiting (two cascaded sections a side for a usable slope).
+  if (s.fLo > 0.0 && s.fLo < s.fs / 2) {
+    const Biquad hp = makeHighPass(s.fLo, s.fs);
+    for (int pass = 0; pass < 2; ++pass) {
+      double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+      for (std::size_t i = 0; i < n; ++i) {
+        const double o = hp.b0 * x[i] + hp.b1 * x1 + hp.b2 * x2 - hp.a1 * y1 - hp.a2 * y2;
+        x2 = x1; x1 = x[i]; y2 = y1; y1 = o; x[i] = o;
+      }
+    }
+  }
+  if (s.fHi > 0.0 && s.fHi < s.fs / 2) {
+    const Biquad lp = makeLowPass(s.fHi, s.fs);
+    for (int pass = 0; pass < 2; ++pass) {
+      double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+      for (std::size_t i = 0; i < n; ++i) {
+        const double o = lp.b0 * x[i] + lp.b1 * x1 + lp.b2 * x2 - lp.a1 * y1 - lp.a2 * y2;
+        x2 = x1; x1 = x[i]; y2 = y1; y1 = o; x[i] = o;
+      }
+    }
+  }
+
+  // Normalise to the requested amplitude (peak), so level is predictable.
+  double peak = 0.0;
+  for (double v : x) peak = std::max(peak, std::fabs(v));
+  if (peak > 0.0) {
+    const double g = s.amplitude / peak;
+    for (double& v : x) v *= g;
+  }
+
+  // Short fades so a looped block does not click at the wrap.
+  const std::size_t fade = std::min<std::size_t>(static_cast<std::size_t>(0.005 * s.fs), n / 2);
+  for (std::size_t i = 0; i < fade; ++i) {
+    const double w = static_cast<double>(i) / fade;
     x[i] *= w;
     x[n - 1 - i] *= w;
   }

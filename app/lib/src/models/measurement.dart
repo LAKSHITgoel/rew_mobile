@@ -72,6 +72,19 @@ class SweepBand {
   bool get isFullRange => fLo <= 100 && fHi >= 10000;
 
   static const presets = <SweepBand>[full, sub, midbass, midrange, tweeter];
+
+  /// A user-defined band, labelled from its own range. Used both for a fresh
+  /// custom range and for editing a preset (the edited copy is custom).
+  factory SweepBand.custom(double lo, double hi) =>
+      SweepBand('Custom · ${_fmtHz(lo)} – ${_fmtHz(hi)}', lo, hi);
+
+  static String _fmtHz(double f) => f >= 1000
+      ? '${(f / 1000).toStringAsFixed(f % 1000 == 0 ? 0 : 1)} kHz'
+      : '${f.round()} Hz';
+
+  /// Clamped to something a 48 kHz sweep can actually contain.
+  static const double minHz = 10;
+  static const double maxHz = 21000;
 }
 
 /// Suggested crossover edges for one measured driver (from rewcore).

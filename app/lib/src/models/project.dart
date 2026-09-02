@@ -38,9 +38,11 @@ class TuneProject {
     Map<String, FreqResponse>? measured,
     Map<String, List<PeqBand>>? eqBands,
     List<CrossoverSetting>? crossovers,
+    Map<String, double>? delaysMs,
   })  : measured = measured ?? {},
         eqBands = eqBands ?? {},
-        crossovers = crossovers ?? [];
+        crossovers = crossovers ?? [],
+        delaysMs = delaysMs ?? {};
 
   final String id;
   String name;
@@ -54,6 +56,9 @@ class TuneProject {
 
   final List<CrossoverSetting> crossovers;
 
+  /// Manual time-alignment delays per channel id, in milliseconds.
+  final Map<String, double> delaysMs;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -63,6 +68,7 @@ class TuneProject {
         'eqBands': eqBands.map(
             (k, v) => MapEntry(k, v.map((b) => b.toJson()).toList())),
         'crossovers': crossovers.map((c) => c.toJson()).toList(),
+        'delaysMs': delaysMs,
       };
 
   factory TuneProject.fromJson(Map<String, dynamic> j) => TuneProject(
@@ -79,5 +85,7 @@ class TuneProject {
         crossovers: (j['crossovers'] as List)
             .map((c) => CrossoverSetting.fromJson(c as Map<String, dynamic>))
             .toList(),
+        delaysMs: ((j['delaysMs'] ?? {}) as Map<String, dynamic>)
+            .map((k, v) => MapEntry(k, (v as num).toDouble())),
       );
 }

@@ -59,6 +59,19 @@ class MeasurementService {
 
   Future<MicInfo> micStatus() => _audio.micStatus();
 
+  // --- live monitoring / test signals (manual checks, not measurement) ---
+  Stream<MicLevel> get inputLevels => _audio.inputLevels;
+  Future<void> startInputLevel() => _audio.startInputLevel();
+  Future<void> stopInputLevel() => _audio.stopInputLevel();
+  Future<void> stopTone() => _audio.stopTone();
+
+  /// Play a looping band-limited pink-noise block for centring by ear.
+  Future<void> startCentringNoise({double fLo = 200, double fHi = 4000}) {
+    final noise = _core.generateNoise(
+        fs: config.fs, durationSec: 2, fLo: fLo, fHi: fHi, amplitude: 0.3);
+    return _audio.startTone(samples: noise, fs: config.fs);
+  }
+
   /// Run a single capture over [band] and return its magnitude response.
   Future<FreqResponse> measureOnce({SweepBand band = SweepBand.full}) async {
     final stimulus = sweepFor(band);

@@ -9,6 +9,7 @@ import 'package:rew_mobile/src/models/project.dart';
 import 'package:rew_mobile/src/services/crossover_calc.dart';
 import 'package:rew_mobile/src/services/dsp_math.dart';
 import 'package:rew_mobile/src/services/project_store.dart';
+import 'package:rew_mobile/src/services/time_align.dart';
 
 void main() {
   group('crossover_calc', () {
@@ -81,6 +82,32 @@ void main() {
       final cal = MicCalibration.parse('# header\n20,0.5\n1000,1.0\n');
       expect(cal.freqHz, [20, 1000]);
       expect(cal.gainDb, [0.5, 1.0]);
+    });
+  });
+
+  group('time alignment', () {
+    test('speed of sound tracks temperature', () {
+      expect(speedOfSound(celsius: 20), closeTo(343.4, 0.1));
+      expect(speedOfSound(celsius: 0), closeTo(331.3, 0.1));
+      expect(speedOfSound(celsius: 35), greaterThan(speedOfSound(celsius: 15)));
+    });
+
+    test('farthest driver is the reference and gets no delay', () {
+      final d = delaysFromDistancesCm({'near': 100, 'far': 200});
+      expect(d['far'], 0.0);
+      // 1 m of extra path at ~343.4 m/s is ~2.91 ms.
+      expect(d['near'], closeTo(2.912, 0.01));
+    });
+
+    test('delays are clamped to what the DSP accepts', () {
+      final d = delaysFromDistancesCm({'a': 1, 'b': 100000}, maxDelayMs: 20);
+      expect(d['a'], 20.0);
+    });
+
+    test('ignores missing or nonsensical distances', () {
+      final d = delaysFromDistancesCm({'a': 0, 'b': -5, 'c': 150});
+      expect(d.keys, ['c']);
+      expect(d['c'], 0.0);
     });
   });
 

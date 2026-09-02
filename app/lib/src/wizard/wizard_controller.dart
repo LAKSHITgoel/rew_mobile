@@ -1,6 +1,8 @@
 // The guided tuning state machine: setup -> crossovers -> EQ -> verify -> done.
 // A ChangeNotifier so screens rebuild as measurements complete. It builds up a
 // TuneProject and persists it via the ProjectStore.
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../audio/audio_backend.dart';
@@ -8,14 +10,16 @@ import '../models/measurement.dart';
 import '../models/mic_calibration.dart';
 import '../models/project.dart';
 import '../services/measurement_service.dart';
+import '../services/time_align.dart';
 import '../services/project_store.dart';
 
-enum WizardStep { setup, crossovers, eq, verify, done }
+enum WizardStep { setup, crossovers, timeAlignment, eq, verify, done }
 
 extension WizardStepInfo on WizardStep {
   String get title => switch (this) {
         WizardStep.setup => 'Setup & level check',
         WizardStep.crossovers => 'Crossovers',
+        WizardStep.timeAlignment => 'Time alignment',
         WizardStep.eq => 'Equalization',
         WizardStep.verify => 'Verify',
         WizardStep.done => 'Done',
@@ -45,6 +49,74 @@ class WizardController extends ChangeNotifier {
   /// Most recent per-driver measurement + its crossover recommendation.
   FreqResponse? lastDriverMeasurement;
   CrossoverRecommendation? lastCrossoverRec;
+
+  // --- live mic check -------------------------------------------------------
+  StreamSubscription<MicLevel>? _levelSub;
+  MicLevel? micLevel;
+  bool monitoringMic = false;
+
+  /// Starts/stops the input meter. Tapping the mic should visibly move it —
+  /// that is the only proof the capture path really works before a sweep.
+  Future<void> toggleMicMonitor() async {
+    if (monitoringMic) {
+      monitoringMic = false;
+      await _levelSub?.cancel();
+      _levelSub = null;
+      micLevel = null;
+      await service.stopInputLevel();
+    } else {
+      _levelSub = service.inputLevels.listen((l) {
+        micLevel = l;
+        notifyListeners();
+      });
+      await service.startInputLevel();
+      monitoringMic = true;
+    }
+    notifyListeners();
+  }
+
+  // --- manual time alignment ------------------------------------------------
+  /// Measured distance from the listening position to each driver, in cm.
+  final Map<String, double> distancesCm = {};
+  double celsius = 20;
+  bool noisePlaying = false;
+
+  /// Delays to enter in the DSP, derived from the distances.
+  Map<String, double> get delaysMs =>
+      delaysFromDistancesCm(distancesCm, celsius: celsius);
+
+  void setDistance(String channelId, double? cm) {
+    if (cm == null) {
+      distancesCm.remove(channelId);
+    } else {
+      distancesCm[channelId] = cm;
+    }
+    project.delaysMs
+      ..clear()
+      ..addAll(delaysMs);
+    store.save(project);
+    notifyListeners();
+  }
+
+  void setTemperature(double c) {
+    celsius = c;
+    project.delaysMs
+      ..clear()
+      ..addAll(delaysMs);
+    notifyListeners();
+  }
+
+  /// Loops band-limited pink noise so the centre image can be judged by ear.
+  Future<void> toggleCentringNoise({double fLo = 200, double fHi = 4000}) async {
+    if (noisePlaying) {
+      await service.stopTone();
+      noisePlaying = false;
+    } else {
+      await service.startCentringNoise(fLo: fLo, fHi: fHi);
+      noisePlaying = true;
+    }
+    notifyListeners();
+  }
 
   bool get hasCalibration => service.calibration != null;
   String? calibrationSummary;
@@ -147,6 +219,15 @@ class WizardController extends ChangeNotifier {
       ..add(c);
     store.save(project);
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _levelSub?.cancel();
+    service.stopInputLevel();
+    if (noisePlaying) service.stopTone();
+    service.stopTone();
+    super.dispose();
   }
 
   Future<void> _run(String msg, Future<void> Function() body) async {

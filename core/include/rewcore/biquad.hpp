@@ -18,6 +18,10 @@ struct Biquad {
 // Parametric ("peaking") EQ band — the kind the Alpine PEQ exposes.
 Biquad makePeaking(double f0, double fs, double gainDb, double q);
 
+// 2nd-order low/high pass (RBJ). Used to band-limit test signals.
+Biquad makeLowPass(double f0, double fs, double q = 0.70710678);
+Biquad makeHighPass(double f0, double fs, double q = 0.70710678);
+
 // Low/high shelf.
 Biquad makeLowShelf(double f0, double fs, double gainDb, double q);
 Biquad makeHighShelf(double f0, double fs, double gainDb, double q);

@@ -39,6 +39,28 @@ class Rewcore {
     }
   }
 
+  /// One loopable block of pink noise, optionally band-limited. Used as the
+  /// centring signal for manual time alignment.
+  Float64List generateNoise({
+    double fs = 48000,
+    double durationSec = 2,
+    double fLo = 0,
+    double fHi = 0,
+    double amplitude = 0.3,
+    int seed = 1,
+  }) {
+    final needed = _b.rewGenerateNoise(
+        fs, durationSec, fLo, fHi, amplitude, seed, ffi.nullptr, 0);
+    final out = calloc<ffi.Double>(needed);
+    try {
+      final n = _b.rewGenerateNoise(
+          fs, durationSec, fLo, fHi, amplitude, seed, out, needed);
+      return Float64List.fromList(out.asTypedList(n));
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   /// Deconvolve a recording against the emitted sweep and return a smoothed,
   /// log-gridded magnitude response. If [calibration] is supplied, the UMIK-1 cal
   /// curve is applied so the result reflects the speakers/room, not the mic.

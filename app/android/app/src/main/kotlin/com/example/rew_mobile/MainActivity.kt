@@ -9,6 +9,7 @@ import android.os.Build
 import com.rewmobile.audio.RewAudioPlugin
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
@@ -21,14 +22,20 @@ class MainActivity : FlutterActivity() {
         private const val REQ_PICK_TEXT = 2001
         private const val CHANNEL_AUDIO = "rew_mobile/audio"
         private const val CHANNEL_FILES = "rew_mobile/files"
+        private const val CHANNEL_LEVELS = "rew_mobile/audio_levels"
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         // Measurement audio (UMIK-1 capture + sweep playback); all DSP is in rewcore.
+        val audio = RewAudioPlugin(applicationContext)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_AUDIO)
-            .setMethodCallHandler(RewAudioPlugin(applicationContext))
+            .setMethodCallHandler(audio)
+        // Live mic level, so the user can confirm the mic is actually hearing
+        // something before running a sweep.
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_LEVELS)
+            .setStreamHandler(audio)
 
         // File picking lives here rather than in a plugin because it needs an
         // Activity to receive the document-picker result.

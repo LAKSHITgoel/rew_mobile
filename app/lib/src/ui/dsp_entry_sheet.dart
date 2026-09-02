@@ -32,6 +32,18 @@ class DspEntrySheet extends StatelessWidget {
           _CrossoverTable(project.crossovers),
           const SizedBox(height: 20),
         ],
+        if (project.delaysMs.isNotEmpty) ...[
+          Text('Time alignment', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            'From measured distances; the farthest driver is the reference at '
+            '0 ms. Fine-tune by ear with the centring noise.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          _DelayTable(project.delaysMs),
+          const SizedBox(height: 20),
+        ],
         Text('Parametric EQ (${eq.length} bands)',
             style: theme.textTheme.titleSmall),
         const SizedBox(height: 8),
@@ -39,6 +51,32 @@ class DspEntrySheet extends StatelessWidget {
           const Text('Run the EQ step to generate bands.')
         else
           _EqTable(eq),
+      ],
+    );
+  }
+}
+
+class _DelayTable extends StatelessWidget {
+  const _DelayTable(this.delays);
+  final Map<String, double> delays;
+
+  String _channelName(String id) => Channel.defaults
+      .firstWhere((c) => c.id == id, orElse: () => Channel(id, id))
+      .name;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = delays.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    return Table(
+      border: TableBorder.all(color: Theme.of(context).dividerColor),
+      children: [
+        const TableRow(children: [_HCell('Channel'), _HCell('Delay (ms)')]),
+        for (final e in entries)
+          TableRow(children: [
+            _Cell(_channelName(e.key)),
+            _Cell(e.value.toStringAsFixed(2)),
+          ]),
       ],
     );
   }

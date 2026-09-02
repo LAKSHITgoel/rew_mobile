@@ -18,6 +18,13 @@ const char* rew_version(void);
 size_t rew_generate_sweep(double fs, double f1, double f2, double durationSec,
                           double* out, size_t cap);
 
+// Generate one loopable block of pink noise, optionally band-limited to
+// [fLo, fHi] (pass 0 for either to skip that side). Used for judging the centre
+// image by ear during manual time alignment. Call with out=NULL to query length.
+size_t rew_generate_noise(double fs, double durationSec, double fLo, double fHi,
+                          double amplitude, unsigned int seed, double* out,
+                          size_t cap);
+
 // Measure a magnitude frequency response from an emitted stimulus and a recording.
 // Writes up to `cap` (freq, magDb) pairs into freqOut/magOut on a log grid over
 // [fMin, fMax] after 1/`smoothFrac`-octave smoothing. Returns the number of points

@@ -6,6 +6,7 @@ import '../models/project.dart';
 import '../services/crossover_calc.dart';
 import '../platform/file_picker.dart';
 import '../services/dsp_math.dart';
+import '../services/time_align.dart';
 import '../wizard/wizard_controller.dart';
 import 'dsp_entry_sheet.dart';
 import 'fr_chart.dart';
@@ -78,6 +79,8 @@ class _WizardScreenState extends State<WizardScreen> {
         return _setupStep();
       case WizardStep.crossovers:
         return _crossoverStep();
+      case WizardStep.timeAlignment:
+        return _timeAlignStep();
       case WizardStep.eq:
         return _eqStep();
       case WizardStep.verify:
@@ -139,13 +142,154 @@ class _WizardScreenState extends State<WizardScreen> {
     if (text != null && text.trim().isNotEmpty) c.loadCalibration(text);
   }
 
+  /// Edit the current band's endpoints (or dial in a fresh custom range).
+  /// Editing a preset produces a custom band rather than mutating the preset.
+  Future<void> _editBand() async {
+    final loCtl = TextEditingController(text: c.band.fLo.round().toString());
+    final hiCtl = TextEditingController(text: c.band.fHi.round().toString());
+    String? error;
+
+    final band = await showDialog<SweepBand>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Sweep range'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: loCtl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'Low (Hz)', border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: hiCtl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'High (Hz)', border: OutlineInputBorder()),
+                  ),
+                ),
+              ]),
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final lo = double.tryParse(loCtl.text.trim());
+                final hi = double.tryParse(hiCtl.text.trim());
+                if (lo == null || hi == null) {
+                  setLocal(() => error = 'Enter numbers in Hz.');
+                  return;
+                }
+                if (lo < SweepBand.minHz || hi > SweepBand.maxHz) {
+                  setLocal(() => error =
+                      'Stay within ${SweepBand.minHz.round()}–${SweepBand.maxHz.round()} Hz.');
+                  return;
+                }
+                if (lo >= hi) {
+                  setLocal(() => error = 'Low must be below high.');
+                  return;
+                }
+                Navigator.pop(context, SweepBand.custom(lo, hi));
+              },
+              child: const Text('Use range'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (band != null) c.setBand(band);
+  }
+
+  /// Live input meter. Showing the mic's *name* only proves it enumerated;
+  /// this proves the capture path actually carries audio.
+  Widget _micCheckCard() {
+    final lvl = c.micLevel;
+    // Map -70..0 dBFS onto 0..1 for the bar.
+    final frac = lvl == null ? 0.0 : ((lvl.rmsDb + 70) / 70).clamp(0.0, 1.0);
+    final ok = lvl != null && lvl.hasSignal;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('Mic check',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+                FilledButton.tonal(
+                  onPressed: c.toggleMicMonitor,
+                  child: Text(c.monitoringMic ? 'Stop' : 'Test mic'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              c.monitoringMic
+                  ? 'Tap or speak into the mic — the bar must move. If it stays '
+                      'flat the mic is connected but not capturing.'
+                  : 'Confirms the mic is not just detected but actually hearing.',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: frac,
+                minHeight: 10,
+                color: ok ? Colors.green : Colors.orange,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              lvl == null
+                  ? '—'
+                  : 'RMS ${lvl.rmsDb.toStringAsFixed(1)} dBFS   ·   '
+                      'peak ${lvl.peakDb.toStringAsFixed(1)} dBFS'
+                      '${ok ? '  ·  signal OK' : '  ·  very quiet'}',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Band picker. Sweeping only the driver under test is a safety matter, not
   /// just an accuracy one.
   Widget _bandSelector() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Sweep band', style: TextStyle(fontWeight: FontWeight.bold)),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('Sweep band',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            TextButton.icon(
+              onPressed: _editBand,
+              icon: const Icon(Icons.tune, size: 16),
+              label: const Text('Edit range'),
+            ),
+          ],
+        ),
         DropdownButton<SweepBand>(
           value: c.band,
           isExpanded: true,
@@ -154,6 +298,13 @@ class _WizardScreenState extends State<WizardScreen> {
               DropdownMenuItem(
                 value: b,
                 child: Text(b.label, style: const TextStyle(fontSize: 13)),
+              ),
+            // A custom band isn't in the presets, so it has to be offered
+            // explicitly or the dropdown would have no matching value.
+            if (!SweepBand.presets.contains(c.band))
+              DropdownMenuItem(
+                value: c.band,
+                child: Text(c.band.label, style: const TextStyle(fontSize: 13)),
               ),
           ],
           onChanged: (b) => c.setBand(b ?? c.band),
@@ -191,6 +342,8 @@ class _WizardScreenState extends State<WizardScreen> {
                 onPressed: c.refreshMic, child: const Text('Refresh')),
           ),
         ),
+        const SizedBox(height: 12),
+        _micCheckCard(),
         const SizedBox(height: 12),
         Card(
           child: ListTile(
@@ -332,6 +485,139 @@ class _WizardScreenState extends State<WizardScreen> {
                 const SnackBar(content: Text('Crossover saved')));
           },
           child: const Text('Save crossover'),
+        ),
+      ],
+    );
+  }
+
+  Widget _timeAlignStep() {
+    final delays = c.delaysMs;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('Manual time alignment',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        const _InfoCard(
+          icon: Icons.straighten,
+          title: 'Why this is measured by hand',
+          body: 'The sweep reaches the car over Bluetooth, whose latency is '
+              'neither known nor stable, so the app cannot honestly measure '
+              'arrival times. Physical distances are exact, though — and only '
+              'the differences between drivers matter, so distances give correct '
+              'delays. Refine by ear afterwards.',
+        ),
+        const _InfoCard(
+          icon: Icons.rule,
+          title: 'Method',
+          body: '1. Sit in your normal listening position.\n'
+              '2. Measure from the centre of your head to each driver (a tape '
+              'measure or a phone laser app; be consistent).\n'
+              '3. Enter the distances below and copy the delays into the Alpine '
+              'app — the farthest driver gets 0 and everything closer is delayed.\n'
+              '4. Play the centring noise below and refine: the image should sit '
+              'dead centre on the dashboard. If it pulls left, add a little delay '
+              'to the LEFT side (you are delaying the side that arrives first).\n'
+              '5. Change one channel at a time, in 0.05-0.1 ms steps.',
+        ),
+        const SizedBox(height: 8),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Centring signal',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                const Text(
+                  'Band-limited pink noise (200 Hz – 4 kHz). Narrowing it to the '
+                  'midrange is deliberate: that is where your ears localise best, '
+                  'and it keeps bass room modes from smearing the image.',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Row(children: [
+                  FilledButton.tonalIcon(
+                    onPressed: () => c.toggleCentringNoise(),
+                    icon: Icon(c.noisePlaying ? Icons.stop : Icons.play_arrow,
+                        size: 18),
+                    label: Text(c.noisePlaying ? 'Stop noise' : 'Play centring noise'),
+                  ),
+                  const SizedBox(width: 12),
+                  if (c.noisePlaying)
+                    const Expanded(
+                      child: Text('Playing — adjust delays in the Alpine app.',
+                          style: TextStyle(fontSize: 12)),
+                    ),
+                ]),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(children: [
+          const Text('Air temperature'),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 80,
+            child: TextField(
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(suffixText: '°C', isDense: true),
+              controller: TextEditingController(text: c.celsius.round().toString()),
+              onSubmitted: (v) {
+                final t = double.tryParse(v);
+                if (t != null) c.setTemperature(t);
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text('sound ≈ ${speedOfSound(celsius: c.celsius).toStringAsFixed(1)} m/s',
+                style: Theme.of(context).textTheme.bodySmall),
+          ),
+        ]),
+        const SizedBox(height: 12),
+        Text('Distance to each driver',
+            style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        for (final ch in Channel.defaults)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Expanded(flex: 4, child: Text(ch.name)),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        suffixText: 'cm', isDense: true, hintText: '—'),
+                    onSubmitted: (v) =>
+                        c.setDistance(ch.id, double.tryParse(v.trim())),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    delays[ch.id] == null
+                        ? '—'
+                        : '${delays[ch.id]!.toStringAsFixed(2)} ms',
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 8),
+        Text(
+          delays.isEmpty
+              ? 'Enter at least two distances to get delays.'
+              : 'Enter these delays in the Alpine app, then use the noise above '
+                  'to fine-tune by ear.',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ],
     );

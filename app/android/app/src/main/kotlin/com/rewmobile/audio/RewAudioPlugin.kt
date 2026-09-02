@@ -21,15 +21,35 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
 
-class RewAudioPlugin(private val context: Context) : MethodChannel.MethodCallHandler {
+class RewAudioPlugin(private val context: Context) :
+    MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
     private val main = Handler(Looper.getMainLooper())
+
+    // Live input-level monitoring (so the user can confirm the mic actually hears
+    // something before wasting a sweep on a dead connection).
+    private var levelSink: EventChannel.EventSink? = null
+    @Volatile private var levelRunning = false
+    private var levelThread: Thread? = null
+
+    // Looped tone/noise playback for manual time alignment.
+    @Volatile private var toneRunning = false
+    private var toneThread: Thread? = null
+
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        levelSink = events
+    }
+
+    override fun onCancel(arguments: Any?) {
+        levelSink = null
+    }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
@@ -52,7 +72,16 @@ class RewAudioPlugin(private val context: Context) : MethodChannel.MethodCallHan
                     }
                 }
             }
-            "dispose" -> result.success(null)
+            "startInputLevel" -> { startInputLevel(); result.success(null) }
+            "stopInputLevel" -> { stopInputLevel(); result.success(null) }
+            "startTone" -> {
+                val bytes = call.argument<ByteArray>("samples")
+                val fs = (call.argument<Double>("fs") ?: 48000.0)
+                if (bytes == null) { result.error("ARG", "missing samples", null) }
+                else { startTone(decodeF64(bytes), fs.toInt()); result.success(null) }
+            }
+            "stopTone" -> { stopTone(); result.success(null) }
+            "dispose" -> { stopInputLevel(); stopTone(); result.success(null) }
             else -> result.notImplemented()
         }
     }
@@ -170,6 +199,100 @@ class RewAudioPlugin(private val context: Context) : MethodChannel.MethodCallHan
         }
 
         return DoubleArray(captured.size) { captured[it].toDouble() }
+    }
+
+    /** Streams input level (dBFS RMS) to Dart ~20x/second. */
+    private fun startInputLevel() {
+        if (levelRunning) return
+        levelRunning = true
+        levelThread = thread {
+            val fs = 48000
+            val minBuf = AudioRecord.getMinBufferSize(
+                fs, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT
+            ).coerceAtLeast(2048)
+            var record: AudioRecord? = null
+            try {
+                record = buildRecord(fs, minBuf * 2)
+                usbInput()?.let { record.preferredDevice = it }
+                record.startRecording()
+                val block = FloatArray(fs / 20)  // ~50 ms
+                while (levelRunning) {
+                    val n = record.read(block, 0, block.size, AudioRecord.READ_BLOCKING)
+                    if (n <= 0) continue
+                    var sum = 0.0
+                    var peak = 0.0
+                    for (i in 0 until n) {
+                        val v = block[i].toDouble()
+                        sum += v * v
+                        if (kotlin.math.abs(v) > peak) peak = kotlin.math.abs(v)
+                    }
+                    val rms = kotlin.math.sqrt(sum / n)
+                    val rmsDb = 20.0 * kotlin.math.log10(rms + 1e-12)
+                    val peakDb = 20.0 * kotlin.math.log10(peak + 1e-12)
+                    main.post {
+                        levelSink?.success(mapOf("rmsDb" to rmsDb, "peakDb" to peakDb))
+                    }
+                }
+            } catch (e: Exception) {
+                main.post { levelSink?.error("LEVEL", e.message, null) }
+            } finally {
+                runCatching { record?.stop() }
+                runCatching { record?.release() }
+            }
+        }
+    }
+
+    private fun stopInputLevel() {
+        levelRunning = false
+        runCatching { levelThread?.join(500) }
+        levelThread = null
+    }
+
+    /** Loops [samples] out as media until stopTone(); used for centring by ear. */
+    private fun startTone(samples: DoubleArray, fs: Int) {
+        stopTone()
+        toneRunning = true
+        toneThread = thread {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                        .setSampleRate(fs)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+            val buf = FloatArray(samples.size) { samples[it].toFloat() }
+            try {
+                track.play()
+                while (toneRunning) {
+                    var off = 0
+                    while (toneRunning && off < buf.size) {
+                        val n = track.write(buf, off, buf.size - off, AudioTrack.WRITE_BLOCKING)
+                        if (n <= 0) break
+                        off += n
+                    }
+                }
+            } catch (e: Exception) {
+                main.post { levelSink?.error("TONE", e.message, null) }
+            } finally {
+                runCatching { track.stop() }
+                track.release()
+            }
+        }
+    }
+
+    private fun stopTone() {
+        toneRunning = false
+        runCatching { toneThread?.join(500) }
+        toneThread = null
     }
 
     private fun decodeF64(bytes: ByteArray): DoubleArray {

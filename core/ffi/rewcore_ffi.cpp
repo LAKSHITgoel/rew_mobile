@@ -28,6 +28,23 @@ size_t rew_generate_sweep(double fs, double f1, double f2, double durationSec,
   return sweep.size();
 }
 
+size_t rew_generate_noise(double fs, double durationSec, double fLo, double fHi,
+                          double amplitude, unsigned int seed, double* out,
+                          size_t cap) {
+  NoiseSpec spec;
+  spec.fs = fs;
+  spec.durationSec = durationSec;
+  spec.fLo = fLo;
+  spec.fHi = fHi;
+  spec.amplitude = amplitude;
+  spec.seed = seed;
+  const std::vector<double> noise = generatePinkNoise(spec);
+  if (out == nullptr) return noise.size();
+  if (cap < noise.size()) return 0;
+  std::copy(noise.begin(), noise.end(), out);
+  return noise.size();
+}
+
 size_t rew_measure_fr(const double* emitted, size_t emittedLen,
                       const double* recorded, size_t recordedLen, double fs,
                       double fMin, double fMax, double smoothFrac, size_t points,

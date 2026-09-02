@@ -350,6 +350,55 @@ static void testFfiPeqErrorOut() {
   CHECK(err[1] < err[0]);       // EQ reduced it
 }
 
+// Mean magnitude (dB) of a signal's spectrum between two frequencies.
+static double bandLevelDb(const std::vector<double>& x, double fs, double f1,
+                          double f2) {
+  const std::size_t N = nextPow2(x.size());
+  const std::vector<Complex> spec = rfft(x, N);
+  double acc = 0.0;
+  std::size_t cnt = 0;
+  for (std::size_t i = 1; i < N / 2; ++i) {
+    const double f = static_cast<double>(i) * fs / N;
+    if (f >= f1 && f <= f2) {
+      acc += std::abs(spec[i]);
+      ++cnt;
+    }
+  }
+  return cnt ? 20.0 * std::log10(acc / cnt + 1e-12) : -240.0;
+}
+
+static void testPinkNoise() {
+  std::printf("test: pink noise slope and band limiting\n");
+  NoiseSpec spec;
+  spec.fs = 48000;
+  spec.durationSec = 1.0;
+  const std::vector<double> pink = generatePinkNoise(spec);
+  CHECK(pink.size() == 48000);
+
+  // Peak is normalised to the requested amplitude.
+  double peak = 0;
+  for (double v : pink) peak = std::max(peak, std::fabs(v));
+  CHECK_NEAR(peak, spec.amplitude, 1e-9);
+
+  // Pink tilts down with frequency: low band louder than high band.
+  const double low = bandLevelDb(pink, spec.fs, 100, 200);
+  const double high = bandLevelDb(pink, spec.fs, 6400, 12800);
+  std::printf("  pink 100-200Hz=%.1f dB, 6.4-12.8kHz=%.1f dB\n", low, high);
+  CHECK(low > high + 6.0);  // ~-3 dB/oct over 6 octaves
+
+  // Band-limited noise must be concentrated in its band.
+  NoiseSpec bl = spec;
+  bl.fLo = 200;
+  bl.fHi = 4000;
+  const std::vector<double> band = generatePinkNoise(bl);
+  const double inBand = bandLevelDb(band, bl.fs, 500, 2000);
+  const double below = bandLevelDb(band, bl.fs, 20, 50);
+  const double above = bandLevelDb(band, bl.fs, 12000, 20000);
+  std::printf("  in=%.1f dB, below=%.1f dB, above=%.1f dB\n", inBand, below, above);
+  CHECK(inBand > below + 20.0);
+  CHECK(inBand > above + 20.0);
+}
+
 static void testCalibrationRealUmikFormat() {
   std::printf("test: parses the real miniDSP UMIK-1 file header\n");
   // miniDSP ships a quoted header rather than a comment marker; we used to miss
@@ -454,6 +503,7 @@ int main() {
   testRecommendCrossover();
   testFfiCalibration();
   testFfiPeqErrorOut();
+  testPinkNoise();
   testCalibrationRealUmikFormat();
   testPeqDoesNotBoostDeadBand();
   testCalibration();
