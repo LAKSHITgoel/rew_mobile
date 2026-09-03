@@ -52,12 +52,22 @@ typedef _RewFitPeqFlatC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
     ffi.Double, ffi.Double, ffi.Int, ffi.Double, ffi.Double,
     ffi.Pointer<ffi.UnsignedChar>, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Int>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Size, ffi.Pointer<ffi.Double>);
 typedef RewFitPeqFlatDart = int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
     double, double, int, double, double,
     ffi.Pointer<ffi.UnsignedChar>, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Int>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    int, ffi.Pointer<ffi.Double>);
+
+// size_t rew_response_spread(mags*, count, n, out*);
+typedef _RewResponseSpreadC = ffi.Size Function(
+    ffi.Pointer<ffi.Double>, ffi.Size, ffi.Size, ffi.Pointer<ffi.Double>);
+typedef RewResponseSpreadDart = int Function(
+    ffi.Pointer<ffi.Double>, int, int, ffi.Pointer<ffi.Double>);
 
 // int rew_recommend_crossover(freq*, mag*, n, dropDb, hpOut*, lpOut*);
 typedef _RewRecommendCrossoverC = ffi.Int Function(
@@ -84,6 +94,9 @@ class RewcoreBindings {
             .lookupFunction<_RewMeasureFrC, RewMeasureFrDart>('rew_measure_fr'),
         rewFitPeqFlat = lib.lookupFunction<_RewFitPeqFlatC, RewFitPeqFlatDart>(
             'rew_fit_peq_flat'),
+        rewResponseSpread =
+            lib.lookupFunction<_RewResponseSpreadC, RewResponseSpreadDart>(
+                'rew_response_spread'),
         rewRecommendCrossover =
             lib.lookupFunction<_RewRecommendCrossoverC, RewRecommendCrossoverDart>(
                 'rew_recommend_crossover');
@@ -94,6 +107,7 @@ class RewcoreBindings {
   final RewRmsDbfsDart rewRmsDbfs;
   final RewMeasureFrDart rewMeasureFr;
   final RewFitPeqFlatDart rewFitPeqFlat;
+  final RewResponseSpreadDart rewResponseSpread;
   final RewRecommendCrossoverDart rewRecommendCrossover;
 
   /// Opens the rewcore native library for the current platform. The library name

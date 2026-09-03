@@ -39,7 +39,13 @@ class Measurement {
     required this.response,
     required this.levelDbfs,
     this.noiseFloor,
+    this.spreadDb = const [],
   });
+
+  /// Per-point standard deviation across the repeated captures that were
+  /// averaged into [response]. Empty when only one capture was taken, which is
+  /// itself meaningful: nothing has been shown to repeat.
+  final List<double> spreadDb;
   final FreqResponse response;
   final double levelDbfs;
 
@@ -95,9 +101,97 @@ class Measurement {
   }
 }
 
+/// Why the fitter placed a band, or refused to. Mirrors PeqReason in
+/// core/include/rewcore/peq.hpp — keep the codes in step.
+enum PeqReason {
+  broadExcess(1),
+  narrowExcess(2),
+  broadDeficit(3),
+  cutLimited(4),
+  declinedNarrowNull(10),
+  declinedNoOutput(11),
+  declinedUnrepeatable(12),
+  unknown(0);
+
+  const PeqReason(this.code);
+  final int code;
+
+  /// Short phrasing for the expert view.
+  String get short => switch (this) {
+        PeqReason.broadExcess => 'broad repeatable excess',
+        PeqReason.narrowExcess => 'narrow excess',
+        PeqReason.broadDeficit => 'broad dip',
+        PeqReason.cutLimited => 'excess deeper than one filter should hold',
+        PeqReason.declinedNarrowNull => 'likely acoustic cancellation',
+        PeqReason.declinedNoOutput => 'driver does not play here',
+        PeqReason.declinedUnrepeatable => 'moved between captures',
+        PeqReason.unknown => 'unclassified',
+      };
+
+  /// What it means and what to do about it, in plain language.
+  String get explanation => switch (this) {
+        PeqReason.broadExcess =>
+          'This range is consistently louder than the rest and the excess is '
+              'wide enough to respond to EQ. Cutting it is safe.',
+        PeqReason.narrowExcess =>
+          'A narrow peak. Worth a gentle cut, but narrow features often shift '
+              'with your head position, so treat it as optional.',
+        PeqReason.broadDeficit =>
+          'A wide, shallow dip — the kind a small boost genuinely lifts. Kept '
+              'small on purpose: a boost costs headroom everywhere.',
+        PeqReason.cutLimited =>
+          'The excess is deeper than one filter should hold. Turn this '
+              "channel's level down instead and keep the headroom.",
+        PeqReason.declinedNarrowNull =>
+          'A deep, narrow dip is almost always cancellation — two paths '
+              'arriving out of step. Boosting cannot fill it, because the '
+              'cancellation removes the boost too. Check crossover, polarity, '
+              'driver position or integration instead.',
+        PeqReason.declinedNoOutput =>
+          'The driver has essentially no output here, so there is nothing to '
+              'correct. This is the crossover doing its job.',
+        PeqReason.declinedUnrepeatable =>
+          'This moved between repeated captures, so it is not a property of '
+              'the car — more likely mic position or background noise. '
+              'Re-measure before treating it as real.',
+        PeqReason.unknown => '',
+      };
+}
+
+PeqReason peqReasonFromCode(int code) => PeqReason.values.firstWhere(
+      (r) => r.code == code,
+      orElse: () => PeqReason.unknown,
+    );
+
+/// Something the fitter deliberately left alone. Advice, not a filter.
+class DeclinedFeature {
+  const DeclinedFeature({required this.reason, required this.freqHz});
+  final PeqReason reason;
+  final double freqHz;
+}
+
 /// One parametric EQ band, as entered into the DSP's own app.
 class PeqBand {
-  const PeqBand({required this.freqHz, required this.gainDb, required this.q});
+  const PeqBand({
+    required this.freqHz,
+    required this.gainDb,
+    required this.q,
+    this.reason = PeqReason.unknown,
+    this.confidence = 0,
+  });
+
+  /// Why this band is recommended, and how sure the app is. A bare
+  /// frequency/gain/Q is not enough to decide whether to type it into a DSP.
+  final PeqReason reason;
+  final double confidence;
+
+  /// How the app frames the recommendation: high confidence is worth doing,
+  /// low confidence is worth trying and listening to.
+  String get strength => confidence >= 0.6
+      ? 'recommended'
+      : confidence >= 0.35
+          ? 'optional'
+          : 'low confidence — listen first';
 
   final double freqHz;
   final double gainDb;
@@ -119,7 +213,12 @@ class EqResult {
     required this.initialErrorDb,
     required this.finalErrorDb,
     this.suggestedLevelTrimDb = 0,
+    this.declined = const [],
   });
+
+  /// Features the app saw and deliberately did not correct, with the reason.
+  /// Surfacing these is the point: silence would look like the app missed them.
+  final List<DeclinedFeature> declined;
 
   final List<PeqBand> bands;
   final double initialErrorDb;

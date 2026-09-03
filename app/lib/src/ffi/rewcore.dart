@@ -157,6 +157,33 @@ class Rewcore {
     }
   }
 
+  /// Per-point standard deviation across repeated captures, in dB.
+  ///
+  /// Averaging captures together and keeping only the mean throws away the most
+  /// useful thing repeated measurements tell you: which features held still.
+  List<double> responseSpread(List<FreqResponse> captures) {
+    if (captures.length < 2) {
+      return List<double>.filled(
+          captures.isEmpty ? 0 : captures.first.length, 0);
+    }
+    final n = captures.first.length;
+    final flat = calloc<ffi.Double>(n * captures.length);
+    final out = calloc<ffi.Double>(n);
+    try {
+      for (var k = 0; k < captures.length; k++) {
+        if (captures[k].length != n) {
+          return List<double>.filled(n, 0);
+        }
+        flat.asTypedList(n * captures.length).setAll(k * n, captures[k].magDb);
+      }
+      final count = _b.rewResponseSpread(flat, captures.length, n, out);
+      return List<double>.generate(count, (i) => out[i]);
+    } finally {
+      calloc.free(flat);
+      calloc.free(out);
+    }
+  }
+
   /// Fit up to [maxBands] parametric EQ bands to move [measured] toward flat.
   EqResult fitPeqFlat({
     required FreqResponse measured,
@@ -177,6 +204,11 @@ class Rewcore {
     /// out of the fit entirely — use it to exclude anything the sweep did not
     /// lift clear of the noise.
     List<bool>? valid,
+
+    /// Per-point standard deviation across repeated captures, same length as
+    /// [measured]. Supplying it is what lets the fitter tell a property of the
+    /// car from something that happened once.
+    List<double>? spreadDb,
   }) {
     final n = measured.length;
     final freq = calloc<ffi.Double>(n);
@@ -184,7 +216,14 @@ class Rewcore {
     final fOut = calloc<ffi.Double>(maxBands);
     final gOut = calloc<ffi.Double>(maxBands);
     final qOut = calloc<ffi.Double>(maxBands);
-    final errOut = calloc<ffi.Double>(3);
+    final errOut = calloc<ffi.Double>(4);
+    final reasonOut = calloc<ffi.Int>(maxBands);
+    final confOut = calloc<ffi.Double>(maxBands);
+    const declinedCap = 16;
+    final declinedOut = calloc<ffi.Double>(declinedCap * 2);
+    final spreadPtr = spreadDb == null || spreadDb.length != n
+        ? ffi.nullptr
+        : calloc<ffi.Double>(n);
     final validPtr = valid == null || valid.length != n
         ? ffi.nullptr
         : calloc<ffi.UnsignedChar>(n);
@@ -197,18 +236,38 @@ class Rewcore {
           v[i] = valid![i] ? 1 : 0;
         }
       }
+      if (spreadPtr != ffi.nullptr) {
+        spreadPtr.asTypedList(n).setAll(0, spreadDb!);
+      }
       final count = _b.rewFitPeqFlat(
           freq, mag, n, fs, fMin, fMax, maxBands, targetPercentile, maxCutDb,
-          validPtr.cast<ffi.UnsignedChar>(), fOut, gOut, qOut, errOut);
+          validPtr.cast<ffi.UnsignedChar>(), spreadPtr.cast<ffi.Double>(),
+          fOut, gOut, qOut, reasonOut, confOut, declinedOut, declinedCap,
+          errOut);
       final bands = <PeqBand>[];
       for (var i = 0; i < count; i++) {
-        bands.add(PeqBand(freqHz: fOut[i], gainDb: gOut[i], q: qOut[i]));
+        bands.add(PeqBand(
+          freqHz: fOut[i],
+          gainDb: gOut[i],
+          q: qOut[i],
+          reason: peqReasonFromCode(reasonOut[i]),
+          confidence: confOut[i],
+        ));
+      }
+      final declined = <DeclinedFeature>[];
+      final declinedCount = errOut[3].round();
+      for (var i = 0; i < declinedCount && i < declinedCap; i++) {
+        declined.add(DeclinedFeature(
+          reason: peqReasonFromCode(declinedOut[i * 2].round()),
+          freqHz: declinedOut[i * 2 + 1],
+        ));
       }
       return EqResult(
         bands: bands,
         initialErrorDb: errOut[0],
         finalErrorDb: errOut[1],
         suggestedLevelTrimDb: errOut[2],
+        declined: declined,
       );
     } finally {
       calloc.free(freq);
@@ -217,7 +276,11 @@ class Rewcore {
       calloc.free(gOut);
       calloc.free(qOut);
       calloc.free(errOut);
+      calloc.free(reasonOut);
+      calloc.free(confOut);
+      calloc.free(declinedOut);
       if (validPtr != ffi.nullptr) calloc.free(validPtr);
+      if (spreadPtr != ffi.nullptr) calloc.free(spreadPtr);
     }
   }
 }

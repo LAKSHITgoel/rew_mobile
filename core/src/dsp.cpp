@@ -299,6 +299,34 @@ FreqResponse resampleLog(const FreqResponse& fr, double fMin, double fMax,
   return out;
 }
 
+FreqResponse responseSpread(const std::vector<FreqResponse>& measurements) {
+  FreqResponse out;
+  if (measurements.empty()) return out;
+  out.freqHz = measurements.front().freqHz;
+  out.magDb.assign(out.freqHz.size(), 0.0);
+  if (measurements.size() < 2) return out;  // one capture says nothing about spread
+
+  for (std::size_t i = 0; i < out.freqHz.size(); ++i) {
+    double sum = 0.0;
+    std::size_t n = 0;
+    for (const auto& m : measurements) {
+      if (i >= m.magDb.size()) continue;
+      sum += m.magDb[i];
+      ++n;
+    }
+    if (n < 2) continue;
+    const double mean = sum / static_cast<double>(n);
+    double var = 0.0;
+    for (const auto& m : measurements) {
+      if (i >= m.magDb.size()) continue;
+      const double d = m.magDb[i] - mean;
+      var += d * d;
+    }
+    out.magDb[i] = std::sqrt(var / static_cast<double>(n - 1));
+  }
+  return out;
+}
+
 FreqResponse spatialAverage(const std::vector<FreqResponse>& measurements) {
   FreqResponse out;
   if (measurements.empty()) return out;

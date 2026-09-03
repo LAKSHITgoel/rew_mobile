@@ -115,4 +115,12 @@ FreqResponse resampleLog(const FreqResponse& fr, double fMin, double fMax,
 // position into one spatial average (all must share the same frequency grid).
 FreqResponse spatialAverage(const std::vector<FreqResponse>& measurements);
 
+// Per-point standard deviation across repeated captures, in dB. This is the
+// measurement's repeatability: a feature that holds still across captures is a
+// property of the car, while one that moves is the microphone position, a
+// passing car, or the wireless link misbehaving. It is the strongest input to
+// whether a deviation is worth correcting, so it is computed here rather than
+// thrown away by averaging.
+FreqResponse responseSpread(const std::vector<FreqResponse>& measurements);
+
 }  // namespace rewcore

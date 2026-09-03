@@ -341,10 +341,12 @@ static void testFfiPeqErrorOut() {
     freq[i] = std::exp(logMin + t * (logMax - logMin));
     mag[i] = cascadeMagnitudeDb(distortion, freq[i], fs);
   }
-  std::vector<double> fo(10), go(10), qo(10), err(3);
-  const size_t bands = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20, 20000,
-                                        10, 0.0, 0.0, nullptr, fo.data(),
-                                        go.data(), qo.data(), err.data());
+  std::vector<double> fo(10), go(10), qo(10), err(4), conf(10), decl(20);
+  std::vector<int> rsn(10);
+  const size_t bands = rew_fit_peq_flat(
+      freq.data(), mag.data(), n, fs, 20, 20000, 10, 0.0, 0.0, nullptr, nullptr,
+      fo.data(), go.data(), qo.data(), rsn.data(), conf.data(), decl.data(), 10,
+      err.data());
   CHECK(bands > 0);
   CHECK(err[0] > 1.0);          // initial error meaningful
   CHECK(err[1] < err[0]);       // EQ reduced it
@@ -358,12 +360,90 @@ static void testFfiPeqErrorOut() {
   // Bluetooth link's cutoff from being "corrected".
   std::vector<unsigned char> valid(n, 0);
   for (int i = 0; i < n; ++i) valid[i] = freq[i] < 500.0 ? 1 : 0;
-  const size_t masked = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20,
-                                         20000, 10, 0.0, 0.0, valid.data(),
-                                         fo.data(), go.data(), qo.data(),
-                                         err.data());
+  const size_t masked = rew_fit_peq_flat(
+      freq.data(), mag.data(), n, fs, 20, 20000, 10, 0.0, 0.0, valid.data(),
+      nullptr, fo.data(), go.data(), qo.data(), rsn.data(), conf.data(),
+      decl.data(), 10, err.data());
   CHECK(masked > 0);
   for (size_t i = 0; i < masked; ++i) CHECK(fo[i] < 500.0);
+
+  // Every band must come back with a reason and a usable confidence: a bare
+  // frequency/gain/Q is not enough to decide whether to type it into a DSP.
+  for (size_t i = 0; i < bands; ++i) {
+    CHECK(rsn[i] != 0);
+    CHECK(conf[i] > 0.0 && conf[i] <= 1.0);
+  }
+}
+
+static void testConfidenceAndRepeatability() {
+  std::printf("test: confidence scoring, and unrepeatable features left alone\n");
+  const double fs = 48000.0;
+  const int n = 200;
+  FreqResponse fr;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (int i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / (n - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    fr.freqHz.push_back(f);
+    // One broad excess at 1 kHz, one at 5 kHz.
+    const double broad = 6.0 * std::exp(-std::pow(std::log2(f / 1000.0), 2) / 0.5);
+    const double other = 6.0 * std::exp(-std::pow(std::log2(f / 5000.0), 2) / 0.5);
+    fr.magDb.push_back(broad + other);
+  }
+
+  PeqConstraints c;
+  c.fs = fs;
+  c.maxBands = 6;
+
+  // With no repeated captures, both peaks are fair game.
+  const PeqFitResult plain = fitPeq(fr, flatTarget(fr), c);
+  CHECK(!plain.bands.empty());
+  CHECK(plain.rationale.size() == plain.bands.size());
+  for (const auto& r : plain.rationale) {
+    CHECK(r.confidence > 0.0 && r.confidence <= 1.0);
+  }
+
+  // Now say the 5 kHz region moved wildly between captures: it must not be
+  // corrected, and the fitter must say so rather than omit it silently.
+  std::vector<double> spread(fr.freqHz.size(), 0.4);
+  for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
+    if (fr.freqHz[i] > 3500.0 && fr.freqHz[i] < 7000.0) spread[i] = 6.0;
+  }
+  const PeqFitResult gated = fitPeq(fr, flatTarget(fr), c, spread);
+  for (const auto& b : gated.bands) {
+    CHECK(!(b.freqHz > 3500.0 && b.freqHz < 7000.0));
+  }
+  bool saidUnrepeatable = false;
+  for (const auto& d : gated.declined) {
+    if (d.reason == PeqReason::declinedUnrepeatable) saidUnrepeatable = true;
+  }
+  CHECK(saidUnrepeatable);
+
+  // A repeatable broad peak should score higher than the same peak measured
+  // sloppily — the whole point of scoring confidence.
+  std::vector<double> tight(fr.freqHz.size(), 0.3);
+  std::vector<double> loose(fr.freqHz.size(), 2.5);
+  const PeqFitResult a = fitPeq(fr, flatTarget(fr), c, tight);
+  const PeqFitResult b = fitPeq(fr, flatTarget(fr), c, loose);
+  CHECK(!a.rationale.empty() && !b.rationale.empty());
+  CHECK(a.rationale[0].confidence > b.rationale[0].confidence);
+}
+
+static void testResponseSpread() {
+  std::printf("test: repeatability across repeated captures\n");
+  FreqResponse a, b, cc;
+  for (int i = 0; i < 10; ++i) {
+    const double f = 100.0 * (i + 1);
+    a.freqHz.push_back(f); b.freqHz.push_back(f); cc.freqHz.push_back(f);
+    a.magDb.push_back(0.0);
+    b.magDb.push_back(i == 5 ? 6.0 : 0.0);   // one point disagrees badly
+    cc.magDb.push_back(i == 5 ? -6.0 : 0.0);
+  }
+  const FreqResponse s = responseSpread({a, b, cc});
+  CHECK(s.magDb[0] < 1e-9);   // agreed everywhere else
+  CHECK(s.magDb[5] > 3.0);    // and disagreed here
+  // A single capture cannot say anything about repeatability.
+  CHECK(responseSpread({a}).magDb[5] < 1e-9);
 }
 
 static void testPeqReportsLevelTrim() {
@@ -378,10 +458,12 @@ static void testPeqReportsLevelTrim() {
     // A wide, deep bass excess, like cabin gain on a subwoofer channel.
     mag[i] = freq[i] < 80.0 ? 14.0 : 0.0;
   }
-  std::vector<double> fo(10), go(10), qo(10), err(3);
-  const size_t bands = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20, 20000,
-                                        10, 0.0, 6.0, nullptr, fo.data(),
-                                        go.data(), qo.data(), err.data());
+  std::vector<double> fo(10), go(10), qo(10), err(4), conf(10), decl(20);
+  std::vector<int> rsn(10);
+  const size_t bands = rew_fit_peq_flat(
+      freq.data(), mag.data(), n, fs, 20, 20000, 10, 0.0, 6.0, nullptr, nullptr,
+      fo.data(), go.data(), qo.data(), rsn.data(), conf.data(), decl.data(), 10,
+      err.data());
   CHECK(bands > 0);
   for (size_t i = 0; i < bands; ++i) CHECK(go[i] >= -6.0 - 1e-9);
   CHECK(err[2] > 0.0);  // and it says how far to turn the channel down
@@ -737,6 +819,8 @@ int main() {
   testFfiCalibration();
   testFfiPeqErrorOut();
   testPeqReportsLevelTrim();
+  testConfidenceAndRepeatability();
+  testResponseSpread();
   testPhaseUnwrap();
   testPhaseOfPureDelay();
   testTimeReferencedPhase();

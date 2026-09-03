@@ -1140,13 +1140,51 @@ class _WizardScreenState extends State<WizardScreen> {
                 ?.copyWith(fontStyle: FontStyle.italic),
           ),
           const SizedBox(height: 8),
+          // Every band says why it is here and how sure the app is. A bare
+          // frequency/gain/Q gives you nothing to decide with.
           for (var i = 0; i < eq.bands.length; i++)
-            Text(
-              '  ${i + 1}.  ${eq.bands[i].freqHz.toStringAsFixed(0)} Hz   '
-              '${eq.bands[i].gainDb >= 0 ? '+' : ''}${eq.bands[i].gainDb.toStringAsFixed(1)} dB   '
-              'Q ${eq.bands[i].q.toStringAsFixed(2)}',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '  ${i + 1}.  ${eq.bands[i].freqHz.toStringAsFixed(0)} Hz   '
+                    '${eq.bands[i].gainDb >= 0 ? '+' : ''}${eq.bands[i].gainDb.toStringAsFixed(1)} dB   '
+                    'Q ${eq.bands[i].q.toStringAsFixed(2)}',
+                    style:
+                        const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  ),
+                  if (eq.bands[i].reason != PeqReason.unknown)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 22, top: 1),
+                      child: Text(
+                        '${eq.bands[i].reason.short} · '
+                        '${eq.bands[i].strength}'
+                        '${eq.bands[i].confidence > 0 ? ' (${(eq.bands[i].confidence * 100).round()}%)' : ''}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                ],
+              ),
             ),
+          if (eq.declined.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text('Left alone on purpose',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            for (final d in eq.declined)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '${d.freqHz >= 1000 ? '${(d.freqHz / 1000).toStringAsFixed(1)} kHz' : '${d.freqHz.round()} Hz'} — '
+                  '${d.reason.short}. ${d.reason.explanation}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+          ],
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: () => showModalBottomSheet(

@@ -173,6 +173,74 @@ void main() {
           reason: 'placed a band in the noise-only region');
     }
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('every recommended band explains itself and carries a confidence',
+      () async {
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      final f = math.exp(math.log(20) + t * (math.log(20000) - math.log(20)));
+      freq.add(f);
+      // A broad, obvious excess around 1 kHz.
+      final d = math.log(f / 1000) / math.ln2;
+      mag.add(6 * math.exp(-d * d / 0.5));
+    }
+    final eq = await service.fitEq(FreqResponse(freq, mag), maxBands: 5);
+    expect(eq.bands, isNotEmpty);
+    for (final b in eq.bands) {
+      expect(b.reason, isNot(PeqReason.unknown),
+          reason: 'a band with no reason is not a recommendation');
+      expect(b.confidence, greaterThan(0));
+      expect(b.confidence, lessThanOrEqualTo(1));
+      expect(b.reason.explanation, isNotEmpty);
+    }
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a feature that did not repeat is reported, not corrected', () async {
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    final spread = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      final f = math.exp(math.log(20) + t * (math.log(20000) - math.log(20)));
+      freq.add(f);
+      final d = math.log(f / 5000) / math.ln2;
+      mag.add(8 * math.exp(-d * d / 0.5));
+      // The 5 kHz region moved wildly between captures.
+      spread.add(f > 3500 && f < 7000 ? 6.0 : 0.3);
+    }
+    final eq = await service.fitEq(FreqResponse(freq, mag),
+        maxBands: 6, spreadDb: spread);
+    for (final b in eq.bands) {
+      expect(b.freqHz > 3500 && b.freqHz < 7000, isFalse,
+          reason: 'corrected something that did not repeat');
+    }
+    expect(eq.declined.any((d) => d.reason == PeqReason.declinedUnrepeatable),
+        isTrue);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('boosts are capped low, because a boost costs headroom everywhere',
+      () async {
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      final f = math.exp(math.log(20) + t * (math.log(20000) - math.log(20)));
+      freq.add(f);
+      // A wide, deep deficit — the tempting case for a big boost.
+      final d = math.log(f / 2000) / math.ln2;
+      mag.add(-10 * math.exp(-d * d / 2.0));
+    }
+    final eq = await service.fitEq(FreqResponse(freq, mag), maxBands: 6);
+    for (final b in eq.bands) {
+      expect(b.gainDb, lessThanOrEqualTo(3.0001),
+          reason: 'boost exceeded the conservative cap');
+    }
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.

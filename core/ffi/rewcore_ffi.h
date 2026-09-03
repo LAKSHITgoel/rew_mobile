@@ -35,6 +35,12 @@ REW_EXPORT size_t rew_generate_sweep(double fs, double f1, double f2, double dur
 // calibration offset to get dB SPL; relative levels need no offset.
 REW_EXPORT double rew_rms_dbfs(const double* samples, size_t n);
 
+// Per-point standard deviation, in dB, across `count` responses of `n` points
+// each (magnitudes laid out contiguously). This is measurement repeatability;
+// feed it to rew_fit_peq_flat so unrepeatable features are not "corrected".
+REW_EXPORT size_t rew_response_spread(const double* mags, size_t count, size_t n,
+                                      double* out);
+
 // Generate one loopable block of pink noise, optionally band-limited to
 // [fLo, fHi] (pass 0 for either to skip that side). Used for judging the centre
 // image by ear during manual time alignment. Call with out=NULL to query length.
@@ -66,11 +72,20 @@ REW_EXPORT size_t rew_measure_fr(const double* emitted, size_t emittedLen,
 // `targetPercentile` places the flat target within the usable band's level
 // distribution: low values cut peaks hard (flatter, but the whole response ends
 // up quieter), high values correct gently. Pass 0 for the default (0.25).
+// Fit EQ, and say why. `spread` (optional, length n) is the per-point standard
+// deviation across repeated captures; supplying it gates out features that did
+// not hold still. `reasonOut`/`confOut` receive one entry per returned band (see
+// PeqReason in peq.hpp for the codes). `declinedOut` receives interleaved
+// (reasonCode, frequency) pairs for features deliberately left alone, up to
+// `declinedCap` pairs, and the count is returned in errOut[3].
 REW_EXPORT size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
                         double fMin, double fMax, int maxBands,
                         double targetPercentile, double maxCutDb,
-                        const unsigned char* valid, double* freqOut,
-                        double* gainOut, double* qOut, double* errOut);
+                        const unsigned char* valid, const double* spread,
+                        double* freqOut, double* gainOut, double* qOut,
+                        int* reasonOut, double* confOut,
+                        double* declinedOut, size_t declinedCap,
+                        double* errOut);
 
 // Recommend crossover edges for one measured driver (parallel freq/mag, length `n`).
 // Writes the high-pass edge to hpOut and low-pass edge to lpOut (Hz). Returns a bit

@@ -83,27 +83,49 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
   return grid.freqHz.size();
 }
 
+size_t rew_response_spread(const double* mags, size_t count, size_t n,
+                           double* out) {
+  if (!mags || !out || count == 0 || n == 0) return 0;
+  std::vector<FreqResponse> rs;
+  rs.reserve(count);
+  for (size_t k = 0; k < count; ++k) {
+    FreqResponse r;
+    r.freqHz.assign(n, 0.0);  // spread does not depend on the frequency grid
+    r.magDb.assign(mags + k * n, mags + (k + 1) * n);
+    rs.push_back(std::move(r));
+  }
+  const FreqResponse s = responseSpread(rs);
+  for (size_t i = 0; i < n && i < s.magDb.size(); ++i) out[i] = s.magDb[i];
+  return s.magDb.size();
+}
+
 size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
                         double fMin, double fMax, int maxBands,
                         double targetPercentile, double maxCutDb,
-                        const unsigned char* valid, double* freqOut,
-                        double* gainOut, double* qOut, double* errOut) {
+                        const unsigned char* valid, const double* spread,
+                        double* freqOut, double* gainOut, double* qOut,
+                        int* reasonOut, double* confOut,
+                        double* declinedOut, size_t declinedCap,
+                        double* errOut) {
   if (!freq || !mag || !freqOut || !gainOut || !qOut) return 0;
   FreqResponse measured;
   // `valid` marks the points the sweep actually cleared the noise by. Dropping
   // the rest is the whole game: fitting to noise is what produced -12 dB bands
   // for a subwoofer. Points are simply omitted, which keeps every downstream
   // statistic (level alignment, passband reference, error) over real data only.
+  std::vector<double> spreadDb;
   if (valid) {
     for (size_t i = 0; i < n; ++i) {
       if (!valid[i]) continue;
       measured.freqHz.push_back(freq[i]);
       measured.magDb.push_back(mag[i]);
+      if (spread) spreadDb.push_back(spread[i]);
     }
     if (measured.freqHz.size() < 4) return 0;  // nothing trustworthy to fit
   } else {
     measured.freqHz.assign(freq, freq + n);
     measured.magDb.assign(mag, mag + n);
+    if (spread) spreadDb.assign(spread, spread + n);
   }
 
   PeqConstraints c;
@@ -114,16 +136,32 @@ size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double 
   if (targetPercentile > 0.0) c.targetPercentile = targetPercentile;
   if (maxCutDb > 0.0) c.maxCutDb = maxCutDb;
 
-  const PeqFitResult res = fitPeq(measured, flatTarget(measured), c);
+  const PeqFitResult res = fitPeq(measured, flatTarget(measured), c, spreadDb);
   for (size_t i = 0; i < res.bands.size(); ++i) {
     freqOut[i] = res.bands[i].freqHz;
     gainOut[i] = res.bands[i].gainDb;
     qOut[i] = res.bands[i].q;
+    if (reasonOut && i < res.rationale.size()) {
+      reasonOut[i] = static_cast<int>(res.rationale[i].reason);
+    }
+    if (confOut && i < res.rationale.size()) {
+      confOut[i] = res.rationale[i].confidence;
+    }
+  }
+  size_t declinedCount = 0;
+  if (declinedOut) {
+    for (const auto& d : res.declined) {
+      if (declinedCount >= declinedCap) break;
+      declinedOut[declinedCount * 2] = static_cast<double>(d.reason);
+      declinedOut[declinedCount * 2 + 1] = d.freqHz;
+      ++declinedCount;
+    }
   }
   if (errOut) {
     errOut[0] = res.initialErrorDb;
     errOut[1] = res.finalErrorDb;
     errOut[2] = res.suggestedLevelTrimDb;
+    errOut[3] = static_cast<double>(declinedCount);
   }
   return res.bands.size();
 }

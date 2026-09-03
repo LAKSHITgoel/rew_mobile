@@ -269,10 +269,19 @@ class MeasurementService {
       all.add(m.response);
       levelSum += m.levelDbfs;
     }
+    // Keep how much the captures disagreed, not just their average: it is what
+    // separates a property of the car from something that happened once.
+    final lib = libraryPath;
+    final spread = all.length < 2
+        ? <double>[]
+        : await Isolate.run(
+            () => Rewcore.open(libraryPath: lib).responseSpread(all));
+
     return Measurement(
         response: _powerAverage(all),
         levelDbfs: levelSum / n,
-        noiseFloor: noise);
+        noiseFloor: noise,
+        spreadDb: spread);
   }
 
   Future<EqResult> fitEq(FreqResponse measured,
@@ -280,7 +289,8 @@ class MeasurementService {
       SweepBand band = SweepBand.full,
       double targetPercentile = 0.25,
       double maxCutDb = 6.0,
-      List<bool>? valid}) {
+      List<bool>? valid,
+      List<double>? spreadDb}) {
     final fs = config.fs;
     final fLo = band.fLo;
     final fHi = band.fHi;
@@ -294,6 +304,7 @@ class MeasurementService {
           targetPercentile: targetPercentile,
           maxCutDb: maxCutDb,
           valid: valid,
+          spreadDb: spreadDb,
         ));
   }
 
@@ -309,7 +320,8 @@ class MeasurementService {
           band: band,
           targetPercentile: targetPercentile,
           maxCutDb: maxCutDb,
-          valid: m.noiseFloor == null ? null : m.trustworthy(minSnrDb: minSnrDb));
+          valid: m.noiseFloor == null ? null : m.trustworthy(minSnrDb: minSnrDb),
+          spreadDb: m.spreadDb.isEmpty ? null : m.spreadDb);
 
   static FreqResponse _powerAverage(List<FreqResponse> ms) {
     if (ms.isEmpty) return FreqResponse([], []);

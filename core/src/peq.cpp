@@ -164,9 +164,38 @@ double estimateQ(const FreqResponse& r, const TargetCurve& t, std::size_t i0,
 
 }  // namespace
 
+// Confidence that a deviation is a real, correctable property of the car.
+//
+// Deliberately explicit rather than a tuned black box: each term is a judgement
+// an experienced tuner makes by eye, written down so it can be argued with.
+//   * width   — broad features behave minimum-phase and respond to EQ; narrow
+//               ones are usually interference that EQ cannot fix.
+//   * depth   — a 1 dB wobble is not worth a filter even if it is real.
+//   * spread  — did it hold still across repeated captures? Strongest signal
+//               there is, and only available when captures were repeated.
+//   * edges   — the sweep's extremes are the least trustworthy part.
+static double bandConfidence(double q, double devDb, double spreadDb,
+                             bool haveSpread, double f, double fLo, double fHi) {
+  // Broad (low Q) is good: 1.0 at Q<=1, falling away to 0.2 by Q=8.
+  const double width = std::clamp(1.0 - (q - 1.0) / 7.0 * 0.8, 0.2, 1.0);
+  // 0.3 at 1 dB, ~1.0 by 6 dB.
+  const double depth = std::clamp(std::fabs(devDb) / 6.0, 0.3, 1.0);
+  // Repeatable to within 1 dB is excellent; 3 dB is the limit of usefulness.
+  const double repeat =
+      haveSpread ? std::clamp(1.0 - (spreadDb - 1.0) / 2.0, 0.15, 1.0) : 0.7;
+  // Fade out within a third of an octave of either analysed edge.
+  const double octFromLo = std::log2(f / fLo);
+  const double octFromHi = std::log2(fHi / f);
+  const double edge =
+      std::clamp(std::min(octFromLo, octFromHi) / 0.33, 0.3, 1.0);
+  return std::clamp(width * depth * repeat * edge, 0.0, 1.0);
+}
+
 PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
-                    const PeqConstraints& c) {
+                    const PeqConstraints& c,
+                    const std::vector<double>& spreadDb) {
   PeqFitResult result;
+  const bool haveSpread = spreadDb.size() == measured.magDb.size();
 
   // Trust only the interior of the requested range; the sweep's extreme edges have
   // low energy and their measured values are unreliable, so don't correct there.
@@ -186,6 +215,28 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
 
   result.initialErrorDb =
       rmsErrorAboveFloor(current, target, fLo, fHi, fitFloorDb);
+
+  // Report the biggest deviations we will refuse to touch, so the app can say
+  // what it saw and why it left it alone rather than silently omitting it.
+  if (haveSpread) {
+    double worstUnstable = 0.0;
+    double worstUnstableF = 0.0;
+    for (std::size_t i = 0; i < current.freqHz.size(); ++i) {
+      const double f = current.freqHz[i];
+      if (f < fLo || f > fHi) continue;
+      if (current.magDb[i] < fitFloorDb) continue;
+      if (spreadDb[i] <= c.maxSpreadDb) continue;
+      const double dev = std::fabs(current.magDb[i] - target.magDb[i]);
+      if (dev > worstUnstable) {
+        worstUnstable = dev;
+        worstUnstableF = f;
+      }
+    }
+    if (worstUnstable > 1.0) {
+      result.declined.push_back(
+          {PeqReason::declinedUnrepeatable, 0.0, worstUnstableF});
+    }
+  }
 
   std::vector<double> centers;   // placed band centers, for anti-stacking
   std::vector<double> rejected;  // nulls we decided not to boost
@@ -219,6 +270,8 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
       const double dev = current.magDb[i] - target.magDb[i];
       // dev < 0 means we'd be boosting here; refuse if there is nothing to boost.
       if (dev < 0.0 && current.magDb[i] < boostFloorDb) continue;
+      // A feature that moved between captures is not a property of the car.
+      if (haveSpread && spreadDb[i] > c.maxSpreadDb) continue;
       if (std::fabs(dev) > std::fabs(worstDev)) {
         worstDev = dev;
         worstIdx = i;
@@ -231,23 +284,34 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
     double gain = std::clamp(-worstDev, c.minGainDb, c.maxGainDb);
     const double q = estimateQ(current, target, worstIdx, fLo, fHi, c);
 
+    const double spreadHere = haveSpread ? spreadDb[worstIdx] : 0.0;
+    const double conf =
+        bandConfidence(q, worstDev, spreadHere, haveSpread, f0, fLo, fHi);
+    PeqReason reason =
+        q > 3.0 ? PeqReason::narrowExcess : PeqReason::broadExcess;
+
     if (gain > 0.0) {
       if (q > c.maxBoostQ) {
         // A narrow dip — a null. Boosting it is wasted power, so leave it and
         // stop reconsidering it, otherwise the search picks it again forever.
         rejected.push_back(f0);
+        result.declined.push_back(
+            {PeqReason::declinedNarrowNull, conf, f0});
         continue;
       }
       gain = std::min(gain, c.maxBoostDb);
+      reason = PeqReason::broadDeficit;
     } else if (gain < -c.maxCutDb) {
       // Deeper than a filter should go. Report the remainder as a level trim
       // rather than dialling in a band that mutes the channel.
       result.suggestedLevelTrimDb =
           std::max(result.suggestedLevelTrimDb, -gain - c.maxCutDb);
       gain = -c.maxCutDb;
+      reason = PeqReason::cutLimited;
     }
 
     result.bands.push_back({f0, gain, q});
+    result.rationale.push_back({reason, conf, f0});
     centers.push_back(f0);
 
     for (std::size_t i = 0; i < current.freqHz.size(); ++i) {
