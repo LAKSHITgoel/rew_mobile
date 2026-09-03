@@ -70,8 +70,13 @@ class DetailedFrChart extends StatefulWidget {
 
 /// Holds the visible window so the chart can be zoomed and panned, the way REW
 /// lets you go in on a single mode or a crossover region. Both axes zoom: pinch
-/// horizontally for frequency, vertically for level, drag to pan, double-tap to
-/// go back to the whole measurement.
+/// horizontally for frequency, vertically for level, drag to pan, and Reset
+/// returns to the whole measurement.
+///
+/// There is deliberately no double-tap-to-fit: a double-tap recognizer and a
+/// scale recognizer in the same detector compete in the gesture arena, the
+/// scale one wins, and the double tap silently never fires. Rather than ship a
+/// gesture that does nothing, the Reset button is the way back.
 class _DetailedFrChartState extends State<DetailedFrChart> {
   double? _fLo, _fHi, _dbLo, _dbHi;
 
@@ -98,6 +103,8 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
     _dbLo0 = dbLo;
     _dbHi0 = dbHi;
   }
+
+
 
   void _onScaleUpdate(ScaleUpdateDetails d, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
@@ -215,7 +222,6 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
                 behavior: HitTestBehavior.opaque,
                 onScaleStart: _onScaleStart,
                 onScaleUpdate: (d) => _onScaleUpdate(d, size),
-                onDoubleTap: _reset,
                 child: CustomPaint(
                   painter: _DetailedPainter(
                     traces: widget.traces,

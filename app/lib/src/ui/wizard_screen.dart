@@ -1114,9 +1114,16 @@ class _WizardScreenState extends State<WizardScreen> {
           Builder(builder: (context) {
             final prev = applyEqPreview(measured!, eq.bands, 48000);
             final drop = prev.levelChangeDb;
+            // A reopened tune has its bands but not the error figures of the
+            // fit that produced them, and printing "0.0 -> 0.0 dB RMS" there
+            // claims a perfectly flat result. Say nothing rather than that.
+            final hasFit = eq.initialErrorDb > 0 || eq.finalErrorDb > 0;
+            final flatness = hasFit
+                ? 'Flatness ${eq.initialErrorDb.toStringAsFixed(1)} → '
+                    '${eq.finalErrorDb.toStringAsFixed(1)} dB RMS'
+                : 'Saved EQ — re-measure to see how flat it lands';
             return Text(
-              'Flatness ${eq.initialErrorDb.toStringAsFixed(1)} → '
-              '${eq.finalErrorDb.toStringAsFixed(1)} dB RMS'
+              '$flatness'
               '${drop < -0.5 ? '  ·  costs ${(-drop).toStringAsFixed(1)} dB of '
                   'output — raise the DSP gain to make it back' : ''}',
               style: Theme.of(context).textTheme.bodySmall,

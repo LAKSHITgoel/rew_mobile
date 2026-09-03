@@ -213,9 +213,9 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
           const Padding(
             padding: EdgeInsets.only(top: 6),
             child: Text(
-                'Pinch to zoom (sideways for frequency, up and down for level), '
-                'drag to pan, double-tap to fit. The export captures the view '
-                'you are looking at.',
+                'Pinch to zoom (sideways for frequency, up and down for level) '
+                'and drag to pan; Reset returns to the full range. The export '
+                'captures the view you are looking at.',
                 style: TextStyle(fontSize: 11)),
           ),
           const SizedBox(height: 16),
