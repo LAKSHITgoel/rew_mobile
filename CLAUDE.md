@@ -24,8 +24,11 @@ packages/
 app/            Flutter app (lib/ + test/); mock audio backend runs with no hardware
   android/      Android host build; the Kotlin audio plugin lives here, wired to the
                 `rew_mobile/audio` channel (com/rewmobile/audio/RewAudioPlugin.kt)
+  ios/          iOS host build; the Swift audio and files plugins live in Runner/
+                (RewAudioPlugin.swift, RewFilesPlugin.swift), registered by hand
+                in AppDelegate — they are app code, not a pub plugin
 android/native/ Android design notes + libusb fallback plan (no code)
-ios/native/     Swift audio plugin (AVAudioEngine + AVAudioSession) — reference
+ios/native/     Earlier Swift sketch, kept as notes; app/ios/Runner is the real one
 ```
 
 ## Build & test
@@ -73,8 +76,16 @@ flutter run --dart-define=USE_MOCK_AUDIO=true   # no mic/car needed
   loads the real compiled library and checks every `rew_*` entry point (including
   calibration-array marshaling and out-params). Build it first, or the test skips:
   `cmake -S packages/rewcore_ffi/src -B build-ffi && cmake --build build-ffi -j`.
-- **Written, needs the Android SDK/NDK (or Xcode + CocoaPods) to compile:** the Android
-  and iOS/macOS host builds of `app/` and `packages/rewcore_ffi/`.
+- **Android is verified on a device:** debug and release builds install and run on
+  a phone; a measurement plays a real sweep and captures the mic end to end.
+- **Nothing iOS has been compiled.** The Swift audio/files plugins are written and
+  registered in the Xcode project (both appear in the Runner target's Sources
+  phase, and the project still parses), but this machine has only the Command
+  Line Tools — no Xcode, no CocoaPods — so none of it has seen a compiler. Treat
+  every iOS claim as unverified until `flutter build ios` runs.
+- The mock audio backend is **opt-in only** (`--dart-define=USE_MOCK_AUDIO=true`)
+  and paints a banner while active. It must never become a default again: a debug
+  build once used it silently and fabricated whole measurements.
 - **Written, needs a device to validate:** the Kotlin/Swift audio layers, and above
   all **Spike #0** — proving simultaneous wireless-sweep-out + USB-mic-in gives a clean
   measurement. Do that before trusting any on-device numbers.
