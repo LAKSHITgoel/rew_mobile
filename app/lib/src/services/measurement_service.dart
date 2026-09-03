@@ -290,7 +290,8 @@ class MeasurementService {
       double targetPercentile = 0.25,
       double maxCutDb = 6.0,
       List<bool>? valid,
-      List<double>? spreadDb}) {
+      List<double>? spreadDb,
+      TargetShape target = const TargetShape()}) {
     final fs = config.fs;
     final fLo = band.fLo;
     final fHi = band.fHi;
@@ -305,6 +306,7 @@ class MeasurementService {
           maxCutDb: maxCutDb,
           valid: valid,
           spreadDb: spreadDb,
+          target: target,
         ));
   }
 
@@ -314,14 +316,16 @@ class MeasurementService {
           SweepBand band = SweepBand.full,
           double targetPercentile = 0.25,
           double maxCutDb = 6.0,
-          double minSnrDb = 10}) =>
+          double minSnrDb = 10,
+          TargetShape target = const TargetShape()}) =>
       fitEq(m.response,
           maxBands: maxBands,
           band: band,
           targetPercentile: targetPercentile,
           maxCutDb: maxCutDb,
           valid: m.noiseFloor == null ? null : m.trustworthy(minSnrDb: minSnrDb),
-          spreadDb: m.spreadDb.isEmpty ? null : m.spreadDb);
+          spreadDb: m.spreadDb.isEmpty ? null : m.spreadDb,
+          target: target);
 
   static FreqResponse _powerAverage(List<FreqResponse> ms) {
     if (ms.isEmpty) return FreqResponse([], []);

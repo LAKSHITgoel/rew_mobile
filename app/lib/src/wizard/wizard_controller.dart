@@ -45,6 +45,12 @@ class WizardController extends ChangeNotifier {
         levelDbfs: project.levelsDbfs['system'] ?? 0,
       );
     }
+    targetPreset = TargetPreset.values.firstWhere(
+      (t) => t.name == project.targetPresetName,
+      orElse: () => TargetPreset.smooth,
+    );
+    customTarget = project.customTarget;
+
     final bands = project.eqBands['system'];
     if (bands != null && bands.isNotEmpty) {
       // Error figures are not saved; they describe the fit that produced these
@@ -70,6 +76,33 @@ class WizardController extends ChangeNotifier {
   /// Deepest cut any single EQ band may use. Matches what is worth typing into
   /// the DSP: past this you turn the channel down instead.
   double maxCutDb = 6.0;
+
+  /// What the system is being aimed at. Preference, not physics — so it is the
+  /// listener's choice, and the app never assumes flat is the goal.
+  TargetPreset targetPreset = TargetPreset.smooth;
+  TargetShape customTarget = TargetPreset.custom.shape;
+
+  TargetShape get targetShape => targetPreset == TargetPreset.custom
+      ? customTarget
+      : targetPreset.shape;
+
+  void setTargetPreset(TargetPreset p) {
+    targetPreset = p;
+    project.targetPresetName = p.name;
+    unawaited(store.save(project));
+    notifyListeners();
+  }
+
+  void setCustomTarget({double? bassShelfDb, double? tiltDbPerOctave}) {
+    customTarget = customTarget.copyWith(
+        bassShelfDb: bassShelfDb, tiltDbPerOctave: tiltDbPerOctave);
+    targetPreset = TargetPreset.custom;
+    project
+      ..targetPresetName = TargetPreset.custom.name
+      ..customTarget = customTarget;
+    unawaited(store.save(project));
+    notifyListeners();
+  }
 
   Smoothing get smoothing => Smoothing.values.firstWhere(
         (s) => s.fraction == service.config.smoothFrac,
@@ -353,7 +386,8 @@ class WizardController extends ChangeNotifier {
           maxBands: eqMaxBands,
           band: band,
           targetPercentile: eqStrength,
-          maxCutDb: maxCutDb);
+          maxCutDb: maxCutDb,
+          target: targetShape);
       lastMeasurement = fr;
       lastMeasurementFull = m;
       lastEq = eq;

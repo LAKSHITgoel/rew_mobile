@@ -1057,6 +1057,50 @@ class _WizardScreenState extends State<WizardScreen> {
           },
         ),
         const SizedBox(height: 8),
+        const Text('Target curve',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<TargetPreset>(
+          value: c.targetPreset,
+          isExpanded: true,
+          items: [
+            for (final t in TargetPreset.values)
+              DropdownMenuItem(
+                  value: t,
+                  child: Text(t.label, style: const TextStyle(fontSize: 13))),
+          ],
+          onChanged: (v) {
+            if (v != null) c.setTargetPreset(v);
+          },
+        ),
+        Text(c.targetPreset.description,
+            style: Theme.of(context).textTheme.bodySmall),
+        if (c.targetPreset == TargetPreset.custom) ...[
+          const SizedBox(height: 4),
+          Text('Bass shelf  ${c.customTarget.bassShelfDb.toStringAsFixed(1)} dB '
+              'below ${c.customTarget.bassShelfHz.round()} Hz'),
+          Slider(
+            value: c.customTarget.bassShelfDb,
+            min: 0,
+            max: 10,
+            divisions: 20,
+            onChanged: (v) => c.setCustomTarget(bassShelfDb: v),
+          ),
+          Text('Treble tilt  ${c.customTarget.tiltDbPerOctave.toStringAsFixed(2)} '
+              'dB per octave above 1 kHz'),
+          Slider(
+            value: c.customTarget.tiltDbPerOctave,
+            min: -1.0,
+            max: 0.2,
+            divisions: 24,
+            onChanged: (v) => c.setCustomTarget(tiltDbPerOctave: v),
+          ),
+        ],
+        Text(
+            'The measurement says what the system is doing; the target says '
+            'what you want it to do. Flat measures neutral but usually sounds '
+            'thin in a car.',
+            style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 8),
         const Text('Resolution (smoothing)',
             style: TextStyle(fontWeight: FontWeight.bold)),
         DropdownButton<Smoothing>(

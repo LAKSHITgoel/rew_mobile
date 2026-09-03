@@ -50,6 +50,36 @@ void main() {
     expect(c.lastEq?.bands.single.freqHz, 51);
   });
 
+  test('the target curve is saved with the tune and restored', () {
+    // The target is the listener's preference, not a property of the car:
+    // silently reverting it on reopen would change every recommendation.
+    final project = TuneProject(
+        id: 't3', name: 'warm car', createdAt: DateTime(2026, 9, 4))
+      ..targetPresetName = 'warm';
+
+    final round = TuneProject.fromJson(project.toJson());
+    expect(round.targetPresetName, 'warm');
+
+    final c = WizardController(
+      service: MeasurementService(core, MockAudioBackend()),
+      store: MemoryProjectStore(),
+      project: round,
+    );
+    expect(c.targetPreset, TargetPreset.warm);
+    expect(c.targetShape.bassShelfDb, TargetPreset.warm.shape.bassShelfDb);
+  });
+
+  test('a tune saved before target curves existed defaults sensibly', () {
+    // Older saved tunes have no target field at all.
+    final json = TuneProject(
+            id: 't4', name: 'old', createdAt: DateTime(2026, 9, 1))
+        .toJson()
+      ..remove('targetPreset')
+      ..remove('customTarget');
+    final restored = TuneProject.fromJson(json);
+    expect(restored.targetPresetName, 'smooth');
+  });
+
   test('a tune with nothing measured yet stays empty', () {
     final c = WizardController(
       service: MeasurementService(core, MockAudioBackend()),

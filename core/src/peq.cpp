@@ -12,6 +12,33 @@ TargetCurve flatTarget(const FreqResponse& like) {
   return t;
 }
 
+TargetCurve makeTarget(const FreqResponse& like, const TargetShape& shape) {
+  TargetCurve t;
+  t.freqHz = like.freqHz;
+  t.magDb.assign(like.freqHz.size(), 0.0);
+  for (std::size_t i = 0; i < like.freqHz.size(); ++i) {
+    const double f = like.freqHz[i];
+    if (f <= 0.0) continue;
+    double db = 0.0;
+
+    // Bass shelf: 1 well below the corner, 0 well above, easing across it.
+    // tanh rather than a hard step so the fitter is not handed a corner to
+    // chase with a filter.
+    if (shape.bassShelfDb != 0.0) {
+      const double width = std::max(0.1, shape.bassShelfWidthOct);
+      const double x = std::log2(f / shape.bassShelfHz) / (width * 0.5);
+      db += shape.bassShelfDb * 0.5 * (1.0 - std::tanh(x));
+    }
+
+    // Tilt, above the pivot only.
+    if (shape.tiltDbPerOctave != 0.0 && f > shape.tiltPivotHz) {
+      db += shape.tiltDbPerOctave * std::log2(f / shape.tiltPivotHz);
+    }
+    t.magDb[i] = db;
+  }
+  return t;
+}
+
 TargetCurve tiltTarget(const FreqResponse& like, double pivotHz,
                        double slopeDbPerOctave) {
   TargetCurve t;

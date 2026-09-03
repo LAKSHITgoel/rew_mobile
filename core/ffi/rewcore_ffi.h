@@ -102,6 +102,15 @@ typedef struct rew_peq_request {
   int maxBands;
   int reserved_;            // explicit padding, so the layout is unambiguous
 
+  // --- target curve ---
+  // Flat is not the goal in a car. All zero means flat; see TargetShape in
+  // peq.hpp for what these mean.
+  double bassShelfDb;
+  double bassShelfHz;       // 0 keeps the built-in default
+  double bassShelfWidthOct; // 0 keeps the built-in default
+  double tiltDbPerOctave;
+  double tiltPivotHz;       // 0 keeps the built-in default
+
   // --- outputs, all caller-allocated ---
   double* freqOut;      // maxBands
   double* gainOut;      // maxBands

@@ -459,6 +459,59 @@ static void testResponseSpread() {
   CHECK(responseSpread({a}).magDb[5] < 1e-9);
 }
 
+static void testTargetCurves() {
+  std::printf("test: target curves — flat is not the goal in a car\n");
+  FreqResponse grid;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (int i = 0; i < 200; ++i) {
+    const double t = static_cast<double>(i) / 199;
+    grid.freqHz.push_back(std::exp(logMin + t * (logMax - logMin)));
+    grid.magDb.push_back(0.0);
+  }
+
+  // A neutral shape is flat.
+  const TargetCurve flat = makeTarget(grid, TargetShape{});
+  for (double v : flat.magDb) CHECK(std::fabs(v) < 1e-9);
+
+  TargetShape warm;
+  warm.bassShelfDb = 6.0;
+  warm.bassShelfHz = 80.0;
+  warm.tiltDbPerOctave = -0.5;
+  warm.tiltPivotHz = 1000.0;
+  const TargetCurve t = makeTarget(grid, warm);
+
+  auto at = [&](double f) {
+    std::size_t best = 0;
+    double bestErr = 1e18;
+    for (std::size_t i = 0; i < t.freqHz.size(); ++i) {
+      const double e = std::fabs(std::log2(t.freqHz[i] / f));
+      if (e < bestErr) { bestErr = e; best = i; }
+    }
+    return t.magDb[best];
+  };
+
+  CHECK_NEAR(at(25.0), 6.0, 0.5);      // well below the corner: full shelf
+  CHECK_NEAR(at(80.0), 3.0, 0.5);      // at the corner: half of it
+  CHECK_NEAR(at(500.0), 0.0, 0.4);     // mids untouched
+  CHECK_NEAR(at(1000.0), 0.0, 0.1);    // pivot is the hinge
+  CHECK_NEAR(at(16000.0), -2.0, 0.4);  // 4 octaves up at -0.5 dB/oct
+  // The tilt must not reach below the pivot, or it double-counts the shelf.
+  CHECK(at(300.0) > -0.1);
+
+  // Fitting a flat measurement against a warm target should ask for bass.
+  FreqResponse measured = grid;
+  PeqConstraints c;
+  c.fs = 48000;
+  c.maxBands = 6;
+  c.maxBoostDb = 6.0;
+  const PeqFitResult r = fitPeq(measured, t, c);
+  bool liftsBass = false;
+  for (const auto& b : r.bands) {
+    if (b.freqHz < 120.0 && b.gainDb > 0.5) liftsBass = true;
+  }
+  CHECK(liftsBass);
+}
+
 static void testPeqNeverMakesItWorse() {
   std::printf("test: EQ never increases the error, even on a rolled-off driver\n");
   const double fs = 48000.0;
@@ -875,6 +928,7 @@ int main() {
   testFfiPeqErrorOut();
   testPeqReportsLevelTrim();
   testPeqNeverMakesItWorse();
+  testTargetCurves();
   testConfidenceAndRepeatability();
   testResponseSpread();
   testPhaseUnwrap();

@@ -78,6 +78,17 @@ final class RewPeqRequest extends ffi.Struct {
   @ffi.Int()
   external int reserved;
 
+  @ffi.Double()
+  external double bassShelfDb;
+  @ffi.Double()
+  external double bassShelfHz;
+  @ffi.Double()
+  external double bassShelfWidthOct;
+  @ffi.Double()
+  external double tiltDbPerOctave;
+  @ffi.Double()
+  external double tiltPivotHz;
+
   external ffi.Pointer<ffi.Double> freqOut;
   external ffi.Pointer<ffi.Double> gainOut;
   external ffi.Pointer<ffi.Double> qOut;

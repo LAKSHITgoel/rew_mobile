@@ -17,6 +17,27 @@ TargetCurve flatTarget(const FreqResponse& like);
 // anchored at `pivotHz`. A mild negative slope approximates common in-car preference.
 TargetCurve tiltTarget(const FreqResponse& like, double pivotHz, double slopeDbPerOctave);
 
+// The shape the system is being aimed at. Flat is not the goal in a car: a
+// small car cabin, a seat that is off-centre and a windscreen close to your
+// ears all mean a literally flat response measures right and sounds thin and
+// bright. Almost every good car tune is a bass shelf plus a gentle downward
+// tilt, so that is what this expresses.
+//
+// Measurement says what the system is doing; the target says what you want it
+// to do. They are different things and the app keeps them separate.
+struct TargetShape {
+  // Lift below bassShelfHz, easing in over bassShelfWidthOct.
+  double bassShelfDb = 0.0;
+  double bassShelfHz = 80.0;
+  double bassShelfWidthOct = 1.5;
+  // Downward tilt applied only ABOVE tiltPivotHz, so it does not silently
+  // double-count with the bass shelf.
+  double tiltDbPerOctave = 0.0;
+  double tiltPivotHz = 1000.0;
+};
+
+TargetCurve makeTarget(const FreqResponse& like, const TargetShape& shape);
+
 // Constraints matching what the DSP hardware can actually accept.
 struct PeqConstraints {
   int maxBands = 10;

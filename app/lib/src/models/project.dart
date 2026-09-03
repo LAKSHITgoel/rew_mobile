@@ -75,6 +75,13 @@ class TuneProject {
   /// against a reference meter. Null means only relative levels are meaningful.
   double? splOffsetDb;
 
+  /// What this tune is aimed at. Saved with the tune because it is the
+  /// listener's preference, not a property of the car — reopening a tune and
+  /// silently reverting to a different target would change every
+  /// recommendation.
+  String targetPresetName = 'smooth';
+  TargetShape customTarget = TargetPreset.custom.shape;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -87,6 +94,8 @@ class TuneProject {
         'delaysMs': delaysMs,
         'levelsDbfs': levelsDbfs,
         'splOffsetDb': splOffsetDb,
+        'targetPreset': targetPresetName,
+        'customTarget': customTarget.toJson(),
         'setup': setup.toJson(),
       };
 
@@ -111,5 +120,9 @@ class TuneProject {
         splOffsetDb: (j['splOffsetDb'] as num?)?.toDouble(),
         setup: CarSetup.fromJson(
             (j['setup'] as Map<String, dynamic>?) ?? const {}),
-      );
+      )
+        ..targetPresetName = (j['targetPreset'] as String?) ?? 'smooth'
+        ..customTarget = j['customTarget'] == null
+            ? TargetPreset.custom.shape
+            : TargetShape.fromJson(j['customTarget'] as Map<String, dynamic>);
 }

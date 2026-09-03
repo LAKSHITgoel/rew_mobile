@@ -223,6 +223,10 @@ class Rewcore {
     /// [measured]. Supplying it is what lets the fitter tell a property of the
     /// car from something that happened once.
     List<double>? spreadDb,
+
+    /// What the system is being aimed at. Flat by default, which is rarely
+    /// what you want in a car.
+    TargetShape target = const TargetShape(),
   }) {
     final n = measured.length;
     final freq = calloc<ffi.Double>(n);
@@ -269,6 +273,11 @@ class Rewcore {
           ..maxCutDb = maxCutDb
           ..maxBoostDb = maxBoostDb
           ..maxBands = maxBands
+          ..bassShelfDb = target.bassShelfDb
+          ..bassShelfHz = target.bassShelfHz
+          ..bassShelfWidthOct = target.bassShelfWidthOct
+          ..tiltDbPerOctave = target.tiltDbPerOctave
+          ..tiltPivotHz = target.tiltPivotHz
           ..freqOut = fOut
           ..gainOut = gOut
           ..qOut = qOut

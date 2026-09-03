@@ -137,7 +137,17 @@ size_t rew_fit_peq(const rew_peq_request* req) {
   if (req->maxCutDb > 0.0) c.maxCutDb = req->maxCutDb;
   if (req->maxBoostDb > 0.0) c.maxBoostDb = req->maxBoostDb;
 
-  const PeqFitResult res = fitPeq(measured, flatTarget(measured), c, spreadDb);
+  TargetShape shape;
+  shape.bassShelfDb = req->bassShelfDb;
+  if (req->bassShelfHz > 0.0) shape.bassShelfHz = req->bassShelfHz;
+  if (req->bassShelfWidthOct > 0.0) {
+    shape.bassShelfWidthOct = req->bassShelfWidthOct;
+  }
+  shape.tiltDbPerOctave = req->tiltDbPerOctave;
+  if (req->tiltPivotHz > 0.0) shape.tiltPivotHz = req->tiltPivotHz;
+
+  const PeqFitResult res =
+      fitPeq(measured, makeTarget(measured, shape), c, spreadDb);
   for (size_t i = 0; i < res.bands.size(); ++i) {
     req->freqOut[i] = res.bands[i].freqHz;
     req->gainOut[i] = res.bands[i].gainDb;

@@ -101,6 +101,92 @@ class Measurement {
   }
 }
 
+/// The shape the system is being aimed at.
+///
+/// Flat is not the goal in a car: a small cabin, an off-centre seat and a
+/// windscreen close to your ears mean a literally flat response measures right
+/// and sounds thin and bright. "Measurement tells you what the system is doing;
+/// the target curve expresses what you want it to do."
+class TargetShape {
+  const TargetShape({
+    this.bassShelfDb = 0,
+    this.bassShelfHz = 80,
+    this.bassShelfWidthOct = 1.5,
+    this.tiltDbPerOctave = 0,
+    this.tiltPivotHz = 1000,
+  });
+
+  final double bassShelfDb;
+  final double bassShelfHz;
+  final double bassShelfWidthOct;
+  final double tiltDbPerOctave;
+  final double tiltPivotHz;
+
+  TargetShape copyWith({double? bassShelfDb, double? tiltDbPerOctave}) =>
+      TargetShape(
+        bassShelfDb: bassShelfDb ?? this.bassShelfDb,
+        bassShelfHz: bassShelfHz,
+        bassShelfWidthOct: bassShelfWidthOct,
+        tiltDbPerOctave: tiltDbPerOctave ?? this.tiltDbPerOctave,
+        tiltPivotHz: tiltPivotHz,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'bassShelfDb': bassShelfDb,
+        'bassShelfHz': bassShelfHz,
+        'bassShelfWidthOct': bassShelfWidthOct,
+        'tiltDbPerOctave': tiltDbPerOctave,
+        'tiltPivotHz': tiltPivotHz,
+      };
+
+  factory TargetShape.fromJson(Map<String, dynamic> j) => TargetShape(
+        bassShelfDb: (j['bassShelfDb'] as num?)?.toDouble() ?? 0,
+        bassShelfHz: (j['bassShelfHz'] as num?)?.toDouble() ?? 80,
+        bassShelfWidthOct: (j['bassShelfWidthOct'] as num?)?.toDouble() ?? 1.5,
+        tiltDbPerOctave: (j['tiltDbPerOctave'] as num?)?.toDouble() ?? 0,
+        tiltPivotHz: (j['tiltPivotHz'] as num?)?.toDouble() ?? 1000,
+      );
+}
+
+/// Target families. Preference, not physics — which is exactly why they are
+/// presets the listener picks rather than something the app decides.
+enum TargetPreset {
+  reference(
+    'Reference',
+    'Flat through the mids and top. Technically neutral; in most cars it '
+        'sounds thin and a little bright.',
+    TargetShape(),
+  ),
+  smooth(
+    'Smooth (low fatigue)',
+    'A modest bass shelf and a gentle downward tilt. The safe default for long '
+        'drives — full, without the top end wearing on you.',
+    TargetShape(bassShelfDb: 4, tiltDbPerOctave: -0.35),
+  ),
+  warm(
+    'Warm',
+    'More bass and a steeper tilt. Forgiving of road noise and bright '
+        'recordings, at the cost of some detail.',
+    TargetShape(bassShelfDb: 6, tiltDbPerOctave: -0.5),
+  ),
+  energetic(
+    'Energetic',
+    'Bass lift with the top end largely kept. Lively and detailed; less '
+        'forgiving of harsh recordings.',
+    TargetShape(bassShelfDb: 4, tiltDbPerOctave: -0.15),
+  ),
+  custom(
+    'Custom',
+    'Set the bass shelf and tilt yourself.',
+    TargetShape(bassShelfDb: 4, tiltDbPerOctave: -0.3),
+  );
+
+  const TargetPreset(this.label, this.description, this.shape);
+  final String label;
+  final String description;
+  final TargetShape shape;
+}
+
 /// Why the fitter placed a band, or refused to. Mirrors PeqReason in
 /// core/include/rewcore/peq.hpp — keep the codes in step.
 enum PeqReason {

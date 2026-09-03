@@ -241,6 +241,44 @@ void main() {
           reason: 'boost exceeded the conservative cap');
     }
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a target curve changes what the EQ aims at', () async {
+    // A perfectly flat measurement. Against a reference target there is nothing
+    // to do; against a warm one the app should ask for bass, because flat is
+    // not the goal in a car.
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      freq.add(math.exp(math.log(20) + t * (math.log(20000) - math.log(20))));
+      mag.add(0);
+    }
+    final flat = FreqResponse(freq, mag);
+
+    final neutral = await service.fitEq(flat,
+        maxBands: 6, target: TargetPreset.reference.shape);
+    expect(neutral.bands, isEmpty,
+        reason: 'a flat response already meets a flat target');
+
+    final warm = await service.fitEq(flat,
+        maxBands: 6, target: TargetPreset.warm.shape);
+    expect(warm.bands, isNotEmpty);
+    expect(warm.bands.any((b) => b.freqHz < 150 && b.gainDb > 0.5), isTrue,
+        reason: 'a warm target should ask for bass');
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('target presets are ordered from neutral to most coloured', () {
+    expect(TargetPreset.reference.shape.bassShelfDb, 0);
+    expect(TargetPreset.warm.shape.bassShelfDb,
+        greaterThan(TargetPreset.smooth.shape.bassShelfDb));
+    // Energetic keeps more top end than warm does.
+    expect(TargetPreset.energetic.shape.tiltDbPerOctave,
+        greaterThan(TargetPreset.warm.shape.tiltDbPerOctave));
+    for (final p in TargetPreset.values) {
+      expect(p.description, isNotEmpty);
+    }
+  });
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.
