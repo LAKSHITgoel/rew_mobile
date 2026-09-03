@@ -244,12 +244,12 @@ class _WizardScreenState extends State<WizardScreen> {
   /// Full-size graph with export, for getting a second opinion on a result
   /// that looks wrong.
   void _openDetail(FreqResponse measured, EqResult? eq) {
+    // Measured only. The whole point of exporting is to get an independent
+    // opinion on the tuning, so the app's own prediction is left off — it would
+    // only anchor whoever (or whatever) looks at it.
     final traces = <DetailedTrace>[
       DetailedTrace(measured, const Color(0xFF7FB2E5), 'Measured',
           showPhase: measured.hasPhase),
-      if (eq != null)
-        DetailedTrace(applyEqPreview(measured, eq.bands, 48000).predicted,
-            const Color(0xFF6DD98C), 'Predicted after EQ (level-matched)'),
     ];
     final cal = c.hasCalibration ? 'mic-calibrated' : 'no mic calibration';
     final lvl = c.levelLabel('system');
@@ -959,6 +959,21 @@ class _WizardScreenState extends State<WizardScreen> {
         ],
         const SizedBox(height: 8),
         _bandSelector(),
+        const SizedBox(height: 8),
+        const Text('EQ strength', style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<double>(
+          value: c.eqStrength,
+          isExpanded: true,
+          items: [
+            for (final e in WizardController.eqStrengths.entries)
+              DropdownMenuItem(
+                  value: e.value,
+                  child: Text(e.key, style: const TextStyle(fontSize: 13))),
+          ],
+          onChanged: (v) {
+            if (v != null) c.setEqStrength(v);
+          },
+        ),
         const SizedBox(height: 12),
         if (measured != null)
           FrChart(curves: [
@@ -983,6 +998,16 @@ class _WizardScreenState extends State<WizardScreen> {
               style: Theme.of(context).textTheme.bodySmall,
             );
           }),
+          const SizedBox(height: 4),
+          Text(
+            'Deep narrow dips are cancellation nulls and are left alone on '
+            'purpose — boosting one just burns amplifier power, because the '
+            'cancellation removes the boost too. Only broad dips get lifted.',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(fontStyle: FontStyle.italic),
+          ),
           const SizedBox(height: 8),
           for (var i = 0; i < eq.bands.length; i++)
             Text(

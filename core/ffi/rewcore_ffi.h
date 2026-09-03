@@ -50,8 +50,12 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
 // Inputs are parallel freq/mag arrays of length `n`. Writes chosen bands into the
 // parallel freq/gain/q output arrays (capacity `maxBands`) and returns the band count.
 // If `errOut` is non-NULL it receives {initialErrorDb, finalErrorDb} (2 doubles).
+// `targetPercentile` places the flat target within the usable band's level
+// distribution: low values cut peaks hard (flatter, but the whole response ends
+// up quieter), high values correct gently. Pass 0 for the default (0.25).
 size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
-                        double fMin, double fMax, int maxBands, double* freqOut,
+                        double fMin, double fMax, int maxBands,
+                        double targetPercentile, double* freqOut,
                         double* gainOut, double* qOut, double* errOut);
 
 // Recommend crossover edges for one measured driver (parallel freq/mag, length `n`).

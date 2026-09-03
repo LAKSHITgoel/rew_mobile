@@ -164,6 +164,9 @@ class Rewcore {
     double fMin = 20,
     double fMax = 20000,
     int maxBands = 10,
+    /// Where the flat target sits in the usable band's level distribution.
+    /// Lower cuts peaks harder (flatter, quieter); higher corrects gently.
+    double targetPercentile = 0.25,
   }) {
     final n = measured.length;
     final freq = calloc<ffi.Double>(n);
@@ -176,7 +179,8 @@ class Rewcore {
       freq.asTypedList(n).setAll(0, measured.freqHz);
       mag.asTypedList(n).setAll(0, measured.magDb);
       final count = _b.rewFitPeqFlat(
-          freq, mag, n, fs, fMin, fMax, maxBands, fOut, gOut, qOut, errOut);
+          freq, mag, n, fs, fMin, fMax, maxBands, targetPercentile,
+          fOut, gOut, qOut, errOut);
       final bands = <PeqBand>[];
       for (var i = 0; i < count; i++) {
         bands.add(PeqBand(freqHz: fOut[i], gainDb: gOut[i], q: qOut[i]));

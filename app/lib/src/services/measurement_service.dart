@@ -128,7 +128,9 @@ class MeasurementService {
   }
 
   Future<EqResult> fitEq(FreqResponse measured,
-      {int maxBands = 10, SweepBand band = SweepBand.full}) {
+      {int maxBands = 10,
+      SweepBand band = SweepBand.full,
+      double targetPercentile = 0.25}) {
     final fs = config.fs;
     final fLo = band.fLo;
     final fHi = band.fHi;
@@ -138,6 +140,7 @@ class MeasurementService {
           fMin: fLo,
           fMax: fHi,
           maxBands: maxBands,
+          targetPercentile: targetPercentile,
         ));
   }
 

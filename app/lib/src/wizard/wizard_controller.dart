@@ -212,6 +212,21 @@ class WizardController extends ChangeNotifier {
   String? calibrationSummary;
 
   int eqMaxBands = 10;
+
+  /// How hard the EQ corrects, as the target's percentile in the usable band.
+  /// Lower flattens more but costs output level; higher is gentler. This is a
+  /// genuine trade-off, not a right answer, so it is the user's to make.
+  double eqStrength = 0.25;
+  static const eqStrengths = <String, double>{
+    'Aggressive — flattest, costs most level': 0.20,
+    'Balanced': 0.25,
+    'Gentle — least level lost': 0.45,
+  };
+
+  void setEqStrength(double v) {
+    eqStrength = v;
+    notifyListeners();
+  }
   int averagingPositions = 3;
 
   /// The band to sweep. Set this to the driver under test before measuring —
@@ -285,7 +300,8 @@ class WizardController extends ChangeNotifier {
     await _run('Measuring system response…', () async {
       final m = await service.measureAveraged(averagingPositions, band: band);
       final fr = m.response;
-      final eq = await service.fitEq(fr, maxBands: eqMaxBands, band: band);
+      final eq = await service.fitEq(fr,
+          maxBands: eqMaxBands, band: band, targetPercentile: eqStrength);
       lastMeasurement = fr;
       lastEq = eq;
       project.measured['system'] = fr;

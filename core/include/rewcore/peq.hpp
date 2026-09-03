@@ -49,6 +49,14 @@ struct PeqConstraints {
   // only burns headroom. The cost is that the whole response ends up quieter,
   // which you make back on the DSP's output gain.
   double targetPercentile = 0.25;
+  // Boosting is only ever allowed into BROAD dips. A narrow dip is a
+  // cancellation null: the cancellation removes the boost along with everything
+  // else, so you burn amplifier power and headroom for no audible gain. Broad
+  // dips are usually genuine response shape and do lift. Q above this is treated
+  // as a null and left alone; boosts are capped separately because even a real
+  // dip is not worth unlimited power.
+  double maxBoostQ = 2.0;
+  double maxBoostDb = 6.0;
 };
 
 struct PeqFitResult {

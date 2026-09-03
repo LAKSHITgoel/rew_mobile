@@ -187,7 +187,8 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
   result.initialErrorDb =
       rmsErrorAboveFloor(current, target, fLo, fHi, fitFloorDb);
 
-  std::vector<double> centers;  // placed band centers, for anti-stacking
+  std::vector<double> centers;   // placed band centers, for anti-stacking
+  std::vector<double> rejected;  // nulls we decided not to boost
 
   for (int band = 0; band < c.maxBands; ++band) {
     double worstDev = 0.0;
@@ -200,6 +201,13 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
       if (current.magDb[i] < fitFloorDb) continue;
       // Skip candidates too close to an already-placed band.
       bool tooClose = false;
+      for (double cf : rejected) {
+        if (std::fabs(std::log2(f / cf)) < c.minSpacingOctave) {
+          tooClose = true;
+          break;
+        }
+      }
+      if (tooClose) continue;
       for (double cf : centers) {
         if (std::fabs(std::log2(f / cf)) < c.minSpacingOctave) {
           tooClose = true;
@@ -220,8 +228,18 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
     if (!found || std::fabs(worstDev) < 0.5) break;  // nothing worth correcting
 
     const double f0 = current.freqHz[worstIdx];
-    const double gain = std::clamp(-worstDev, c.minGainDb, c.maxGainDb);
+    double gain = std::clamp(-worstDev, c.minGainDb, c.maxGainDb);
     const double q = estimateQ(current, target, worstIdx, fLo, fHi, c);
+
+    if (gain > 0.0) {
+      if (q > c.maxBoostQ) {
+        // A narrow dip — a null. Boosting it is wasted power, so leave it and
+        // stop reconsidering it, otherwise the search picks it again forever.
+        rejected.push_back(f0);
+        continue;
+      }
+      gain = std::min(gain, c.maxBoostDb);
+    }
 
     result.bands.push_back({f0, gain, q});
     centers.push_back(f0);

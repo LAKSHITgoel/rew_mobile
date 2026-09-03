@@ -343,7 +343,7 @@ static void testFfiPeqErrorOut() {
   }
   std::vector<double> fo(10), go(10), qo(10), err(2);
   const size_t bands = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20, 20000,
-                                        10, fo.data(), go.data(), qo.data(),
+                                        10, 0.0, fo.data(), go.data(), qo.data(),
                                         err.data());
   CHECK(bands > 0);
   CHECK(err[0] > 1.0);          // initial error meaningful

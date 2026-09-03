@@ -48,11 +48,11 @@ typedef RewMeasureFrDart = int Function(
 //                         freqOut*, gainOut*, qOut*, errOut*);
 typedef _RewFitPeqFlatC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
-    ffi.Double, ffi.Double, ffi.Int, ffi.Pointer<ffi.Double>,
+    ffi.Double, ffi.Double, ffi.Int, ffi.Double, ffi.Pointer<ffi.Double>,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
 typedef RewFitPeqFlatDart = int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
-    double, double, int, ffi.Pointer<ffi.Double>,
+    double, double, int, double, ffi.Pointer<ffi.Double>,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
 
 // int rew_recommend_crossover(freq*, mag*, n, dropDb, hpOut*, lpOut*);

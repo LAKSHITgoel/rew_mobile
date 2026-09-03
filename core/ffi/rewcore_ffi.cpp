@@ -84,7 +84,8 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
 }
 
 size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
-                        double fMin, double fMax, int maxBands, double* freqOut,
+                        double fMin, double fMax, int maxBands,
+                        double targetPercentile, double* freqOut,
                         double* gainOut, double* qOut, double* errOut) {
   if (!freq || !mag || !freqOut || !gainOut || !qOut) return 0;
   FreqResponse measured;
@@ -96,6 +97,7 @@ size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double 
   c.fMin = fMin;
   c.fMax = fMax;
   c.maxBands = maxBands;
+  if (targetPercentile > 0.0) c.targetPercentile = targetPercentile;
 
   const PeqFitResult res = fitPeq(measured, flatTarget(measured), c);
   for (size_t i = 0; i < res.bands.size(); ++i) {
