@@ -210,6 +210,14 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
               subtitle: widget.subtitle,
             ),
           ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+                'Pinch to zoom (sideways for frequency, up and down for level), '
+                'drag to pan, double-tap to fit. The export captures the view '
+                'you are looking at.',
+                style: TextStyle(fontSize: 11)),
+          ),
           const SizedBox(height: 16),
           Text(
             'Save puts the file in Files (you choose the folder and name); Share '
