@@ -35,11 +35,17 @@ class MeasurementConfig {
 }
 
 class MeasurementService {
-  MeasurementService(this._core, this._audio, {this.config = const MeasurementConfig()});
+  MeasurementService(this._core, this._audio,
+      {this.config = const MeasurementConfig(), this.libraryPath});
 
   final Rewcore _core;
   final AudioBackend _audio;
   final MeasurementConfig config;
+
+  /// Where a background isolate should load the native library from. Null means
+  /// "resolve the usual way", which is what the app does on a device; tests pass
+  /// an explicit path because a plain Dart process has no linked-in symbols.
+  final String? libraryPath;
 
   /// UMIK-1 calibration applied to every measurement (null = none loaded).
   MicCalibration? calibration;
@@ -56,7 +62,8 @@ class MeasurementService {
       final dur = config.durationSec;
       final f1 = (band.fLo / 1.1).clamp(10.0, fs / 2);
       final f2 = (band.fHi * 1.1).clamp(20.0, fs * 0.45);
-      return Isolate.run(() => Rewcore.open()
+      final lib = libraryPath;
+      return Isolate.run(() => Rewcore.open(libraryPath: lib)
           .generateSweep(fs: fs, f1: f1, f2: f2, durationSec: dur));
     });
   }
@@ -72,7 +79,8 @@ class MeasurementService {
   /// Play a looping band-limited pink-noise block for centring by ear.
   Future<void> startCentringNoise({double fLo = 200, double fHi = 4000}) async {
     final fs = config.fs;
-    final noise = await Isolate.run(() => Rewcore.open()
+    final lib = libraryPath;
+    final noise = await Isolate.run(() => Rewcore.open(libraryPath: lib)
         .generateNoise(fs: fs, durationSec: 2, fLo: fLo, fHi: fHi, amplitude: 0.3));
     await _audio.startTone(samples: noise, fs: fs);
   }
@@ -91,9 +99,10 @@ class MeasurementService {
     final fLo = band.fLo;
     final fHi = band.fHi;
     final cal = calibration;
+    final lib = libraryPath;
 
     return Isolate.run(() {
-      final core = Rewcore.open();
+      final core = Rewcore.open(libraryPath: lib);
       final level = core.rmsDbfs(recorded);
       final response = core.measureFr(
         emitted: stimulus,
@@ -134,7 +143,8 @@ class MeasurementService {
     final fs = config.fs;
     final fLo = band.fLo;
     final fHi = band.fHi;
-    return Isolate.run(() => Rewcore.open().fitPeqFlat(
+    final lib = libraryPath;
+    return Isolate.run(() => Rewcore.open(libraryPath: lib).fitPeqFlat(
           measured: measured,
           fs: fs,
           fMin: fLo,
