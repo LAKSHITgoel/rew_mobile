@@ -292,11 +292,48 @@ static void testRecommendCrossover() {
     driver.magDb.push_back(20.0 * std::log10(hp * lp));
   }
   const CrossoverRecommendation rec = recommendCrossover(driver, 6.0);
-  CHECK(rec.hasHighPass);
-  CHECK(rec.hasLowPass);
-  std::printf("  suggested HPF=%.0f Hz, LPF=%.0f Hz\n", rec.highPassHz, rec.lowPassHz);
-  CHECK(rec.highPassHz > 420 && rec.highPassHz < 600);
-  CHECK(rec.lowPassHz > 4200 && rec.lowPassHz < 6000);
+  CHECK(rec.hasHighPass());
+  CHECK(rec.hasLowPass());
+  std::printf("  suggested HPF=%.0f Hz, LPF=%.0f Hz\n", rec.highPass.freqHz,
+              rec.lowPass.freqHz);
+  CHECK(rec.highPass.freqHz > 420 && rec.highPass.freqHz < 600);
+  CHECK(rec.lowPass.freqHz > 4200 && rec.lowPass.freqHz < 6000);
+
+  // The driver here is already LR4 (24 dB/octave acoustic) either side, so it
+  // needs essentially no help from the DSP. Measuring that, rather than
+  // assuming it from a datasheet, is the whole point.
+  std::printf("  measured acoustic slopes: HP %.0f, LP %.0f dB/oct\n",
+              rec.highPass.acousticSlopeDbPerOct,
+              rec.lowPass.acousticSlopeDbPerOct);
+  CHECK(rec.highPass.acousticSlopeDbPerOct > 12.0);
+  CHECK(rec.lowPass.acousticSlopeDbPerOct > 12.0);
+  CHECK(rec.highPass.electricalSlopeDbPerOct < 24.0);
+  CHECK(rec.lowPass.electricalSlopeDbPerOct < 24.0);
+
+  // Safety margin: high-pass above the measured edge, low-pass below it, so a
+  // driver is never asked to work right at its limit.
+  CHECK(rec.highPass.recommendedHz > rec.highPass.freqHz);
+  CHECK(rec.lowPass.recommendedHz < rec.lowPass.freqHz);
+
+  // Both edges sit well inside the measured range and roll off cleanly, so
+  // they should be confident.
+  CHECK(rec.highPass.confidence > 0.5);
+  CHECK(rec.lowPass.confidence > 0.5);
+  CHECK(rec.highPass.reason == CrossoverReason::measuredRolloff);
+
+  // A full-range driver that never rolls off inside the measured band must not
+  // get an invented crossover; it must say the sweep simply ran out.
+  FreqResponse flat;
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    flat.freqHz.push_back(std::exp(logMin + t * (logMax - logMin)));
+    flat.magDb.push_back(0.0);
+  }
+  const CrossoverRecommendation none = recommendCrossover(flat, 6.0);
+  CHECK(!none.hasHighPass());
+  CHECK(!none.hasLowPass());
+  CHECK(none.highPass.reason == CrossoverReason::stillStrongAtLimit);
+  CHECK(none.lowPass.reason == CrossoverReason::stillStrongAtLimit);
 }
 
 static void testFfiCalibration() {

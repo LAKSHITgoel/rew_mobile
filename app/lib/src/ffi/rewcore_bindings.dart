@@ -33,6 +33,36 @@ typedef RewGenerateNoiseDart = int Function(
 //                         targetPercentile, maxCutDb, valid*,
 //                         freqOut*, gainOut*, qOut*, errOut*);
 // errOut receives THREE doubles: initial error, final error, suggested level trim.
+/// Mirrors `rew_crossover_edge` / `rew_crossover_result` in
+/// core/ffi/rewcore_ffi.h. Field order and types must match exactly.
+final class RewCrossoverEdge extends ffi.Struct {
+  @ffi.Int()
+  external int present;
+  @ffi.Int()
+  external int reason;
+  @ffi.Double()
+  external double freqHz;
+  @ffi.Double()
+  external double recommendedHz;
+  @ffi.Double()
+  external double acousticSlopeDbPerOct;
+  @ffi.Double()
+  external double electricalSlopeDbPerOct;
+  @ffi.Double()
+  external double confidence;
+}
+
+final class RewCrossoverResult extends ffi.Struct {
+  external RewCrossoverEdge highPass;
+  external RewCrossoverEdge lowPass;
+  @ffi.Double()
+  external double passbandDb;
+}
+
+// size_t rew_crossover_result_size(void);
+typedef _RewCrossoverResultSizeC = ffi.Size Function();
+typedef RewCrossoverResultSizeDart = int Function();
+
 /// Mirrors `rew_measure_request` in core/ffi/rewcore_ffi.h. Field order and
 /// types must match exactly; see the note on [RewPeqRequest].
 final class RewMeasureRequest extends ffi.Struct {
@@ -147,13 +177,13 @@ typedef _RewResponseSpreadC = ffi.Size Function(
 typedef RewResponseSpreadDart = int Function(
     ffi.Pointer<ffi.Double>, int, int, ffi.Pointer<ffi.Double>);
 
-// int rew_recommend_crossover(freq*, mag*, n, dropDb, hpOut*, lpOut*);
+// int rew_recommend_crossover(freq*, mag*, n, dropDb, targetSlope, margin, out*);
 typedef _RewRecommendCrossoverC = ffi.Int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+    ffi.Double, ffi.Double, ffi.Pointer<RewCrossoverResult>);
 typedef RewRecommendCrossoverDart = int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
+    double, double, ffi.Pointer<RewCrossoverResult>);
 
 /// Resolved function pointers for the rewcore native library.
 class RewcoreBindings {
@@ -170,6 +200,8 @@ class RewcoreBindings {
                 'rew_generate_noise'),
         rewMeasureFr = lib
             .lookupFunction<_RewMeasureFrC, RewMeasureFrDart>('rew_measure_fr'),
+        rewCrossoverResultSize = lib.lookupFunction<_RewCrossoverResultSizeC,
+            RewCrossoverResultSizeDart>('rew_crossover_result_size'),
         rewMeasureRequestSize = lib.lookupFunction<_RewMeasureRequestSizeC,
             RewMeasureRequestSizeDart>('rew_measure_request_size'),
         rewFitPeq =
@@ -194,6 +226,7 @@ class RewcoreBindings {
   final RewPeqRequestSizeDart rewPeqRequestSize;
   final RewResponseSpreadDart rewResponseSpread;
   final RewRecommendCrossoverDart rewRecommendCrossover;
+  final RewCrossoverResultSizeDart rewCrossoverResultSize;
 
   /// Opens the rewcore native library for the current platform. The library name
   /// matches the `rewcore_ffi` plugin (see packages/rewcore_ffi).

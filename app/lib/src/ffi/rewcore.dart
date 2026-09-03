@@ -173,25 +173,36 @@ class Rewcore {
 
   /// Recommend crossover edges for one measured driver response.
   CrossoverRecommendation recommendCrossover(FreqResponse driver,
-      {double dropDb = 6}) {
+      {double dropDb = 6,
+      double targetAcousticDbPerOct = 24,
+      double marginOctaves = 0.33}) {
     final n = driver.length;
     final freq = calloc<ffi.Double>(n);
     final mag = calloc<ffi.Double>(n);
-    final hp = calloc<ffi.Double>(1);
-    final lp = calloc<ffi.Double>(1);
+    final out = calloc<RewCrossoverResult>();
     try {
       freq.asTypedList(n).setAll(0, driver.freqHz);
       mag.asTypedList(n).setAll(0, driver.magDb);
-      final mask = _b.rewRecommendCrossover(freq, mag, n, dropDb, hp, lp);
+      _b.rewRecommendCrossover(
+          freq, mag, n, dropDb, targetAcousticDbPerOct, marginOctaves, out);
+      CrossoverEdge edge(RewCrossoverEdge e) => CrossoverEdge(
+            present: e.present != 0,
+            freqHz: e.freqHz,
+            recommendedHz: e.recommendedHz,
+            acousticSlopeDbPerOct: e.acousticSlopeDbPerOct,
+            electricalSlopeDbPerOct: e.electricalSlopeDbPerOct,
+            confidence: e.confidence,
+            reason: crossoverReasonFromCode(e.reason),
+          );
       return CrossoverRecommendation(
-        highPassHz: (mask & 1) != 0 ? hp.value : null,
-        lowPassHz: (mask & 2) != 0 ? lp.value : null,
+        highPass: edge(out.ref.highPass),
+        lowPass: edge(out.ref.lowPass),
+        passbandDb: out.ref.passbandDb,
       );
     } finally {
       calloc.free(freq);
       calloc.free(mag);
-      calloc.free(hp);
-      calloc.free(lp);
+      calloc.free(out);
     }
   }
 
@@ -229,7 +240,8 @@ class Rewcore {
   /// failure (a field added on one side only) immediately.
   bool peqRequestLayoutMatches() =>
       _b.rewPeqRequestSize() == ffi.sizeOf<RewPeqRequest>() &&
-      _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>();
+      _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>() &&
+      _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>();
 
   /// Per-point standard deviation across repeated captures, in dB.
   ///

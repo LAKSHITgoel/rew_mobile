@@ -66,8 +66,58 @@ SummationCheck checkSummation(double fc, Slope lowSlope, Slope highSlope,
   return out;
 }
 
+// Least-squares slope of level against log2(frequency), in dB per octave, over
+// the points between two indices — the driver's natural roll-off. Also returns
+// how well a straight line actually described it (R^2), which is the honest
+// measure of whether "slope" means anything here: a clean roll-off fits a line,
+// while a lumpy cancellation-riddled one does not.
+static void slopeOverRange(const FreqResponse& r, std::size_t a, std::size_t b,
+                           double* slopeDbPerOct, double* r2) {
+  *slopeDbPerOct = 0.0;
+  *r2 = 0.0;
+  if (b <= a || b >= r.freqHz.size()) return;
+  const std::size_t n = b - a + 1;
+  if (n < 3) return;
+
+  double sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (std::size_t i = a; i <= b; ++i) {
+    const double x = std::log2(r.freqHz[i]);
+    const double y = r.magDb[i];
+    sx += x; sy += y; sxx += x * x; sxy += x * y;
+  }
+  const double dn = static_cast<double>(n);
+  const double denom = dn * sxx - sx * sx;
+  if (std::fabs(denom) < 1e-12) return;
+  const double slope = (dn * sxy - sx * sy) / denom;
+  const double intercept = (sy - slope * sx) / dn;
+
+  double ssTot = 0, ssRes = 0;
+  const double meanY = sy / dn;
+  for (std::size_t i = a; i <= b; ++i) {
+    const double x = std::log2(r.freqHz[i]);
+    const double pred = slope * x + intercept;
+    ssRes += (r.magDb[i] - pred) * (r.magDb[i] - pred);
+    ssTot += (r.magDb[i] - meanY) * (r.magDb[i] - meanY);
+  }
+  *slopeDbPerOct = slope;
+  *r2 = ssTot > 1e-12 ? std::clamp(1.0 - ssRes / ssTot, 0.0, 1.0) : 0.0;
+}
+
+// DSP filters come in 6 dB steps; recommending 17 dB/octave helps nobody.
+static double roundToAvailableSlope(double dbPerOct) {
+  const double steps[] = {0.0, 6.0, 12.0, 18.0, 24.0, 36.0, 48.0};
+  double best = 0.0, bestErr = 1e18;
+  for (double s : steps) {
+    const double e = std::fabs(s - dbPerOct);
+    if (e < bestErr) { bestErr = e; best = s; }
+  }
+  return best;
+}
+
 CrossoverRecommendation recommendCrossover(const FreqResponse& driver,
-                                           double dropDb) {
+                                           double dropDb,
+                                           double targetAcousticDbPerOct,
+                                           double marginOctaves) {
   CrossoverRecommendation rec;
   const std::size_t n = driver.magDb.size();
   if (n < 3) return rec;
@@ -92,30 +142,98 @@ CrossoverRecommendation recommendCrossover(const FreqResponse& driver,
     if (driver.magDb[i] > driver.magDb[peak]) peak = i;
   }
 
+  // Fills in one edge once its crossing index has been found.
+  auto describe = [&](CrossoverEdge& edge, std::size_t idx, bool highPass) {
+    // Measure the natural roll-off over about an octave outside the edge.
+    const double f = driver.freqHz[idx];
+    std::size_t a = idx, b = idx;
+    if (highPass) {
+      const double lowF = f / 2.0;
+      a = 0;
+      for (std::size_t i = 0; i < idx; ++i) {
+        if (driver.freqHz[i] >= lowF) { a = i; break; }
+      }
+      b = idx;
+    } else {
+      a = idx;
+      const double highF = f * 2.0;
+      b = n - 1;
+      for (std::size_t i = idx; i < n; ++i) {
+        if (driver.freqHz[i] >= highF) { b = i; break; }
+      }
+    }
+    double slope = 0.0, r2 = 0.0;
+    slopeOverRange(driver, a, b, &slope, &r2);
+    // A high-pass edge falls as frequency drops, so its fitted slope is
+    // positive going up; report roll-off magnitude either way.
+    edge.acousticSlopeDbPerOct = std::fabs(slope);
+
+    const double remaining =
+        std::max(0.0, targetAcousticDbPerOct - edge.acousticSlopeDbPerOct);
+    edge.electricalSlopeDbPerOct = roundToAvailableSlope(remaining);
+
+    // Keep the driver off its limit: high-pass a little higher, low-pass a
+    // little lower than the raw -dropDb point.
+    edge.recommendedHz = highPass ? f * std::pow(2.0, marginOctaves)
+                                  : f / std::pow(2.0, marginOctaves);
+
+    // Confidence: how straight the roll-off was, and how far the edge sits
+    // from the end of what was actually measured. An edge landing on the last
+    // point of the sweep is a guess about a region nobody looked at.
+    const double octFromEnd =
+        highPass ? std::log2(f / driver.freqHz.front())
+                 : std::log2(driver.freqHz.back() / f);
+    const double room = std::clamp(octFromEnd / 0.5, 0.0, 1.0);
+    edge.confidence = std::clamp(std::sqrt(std::max(r2, 0.0)) * 0.6 + room * 0.4,
+                                 0.0, 1.0);
+    edge.reason = CrossoverReason::measuredRolloff;
+    edge.present = true;
+  };
+
   // Walk down from the peak toward low frequencies; the first crossing below the
   // threshold marks the low edge (interpolated) -> high-pass point.
+  bool foundHigh = false;
   for (std::size_t i = peak; i > 0; --i) {
     if (driver.magDb[i - 1] < threshold) {
       const double f0 = driver.freqHz[i - 1], f1 = driver.freqHz[i];
       const double d0 = driver.magDb[i - 1], d1 = driver.magDb[i];
       const double t = (threshold - d0) / (d1 - d0);
-      rec.hasHighPass = true;
-      rec.highPassHz = std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      rec.highPass.freqHz =
+          std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      describe(rec.highPass, i - 1, true);
+      rec.highPass.freqHz =
+          std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      rec.highPass.recommendedHz =
+          rec.highPass.freqHz * std::pow(2.0, marginOctaves);
+      foundHigh = true;
       break;
     }
+  }
+  if (!foundHigh) {
+    rec.highPass.reason = CrossoverReason::stillStrongAtLimit;
   }
 
   // Walk up from the peak toward high frequencies; the first crossing below the
   // threshold marks the high edge -> low-pass point.
+  bool foundLow = false;
   for (std::size_t i = peak; i + 1 < n; ++i) {
     if (driver.magDb[i + 1] < threshold) {
       const double f0 = driver.freqHz[i], f1 = driver.freqHz[i + 1];
       const double d0 = driver.magDb[i], d1 = driver.magDb[i + 1];
       const double t = (threshold - d0) / (d1 - d0);
-      rec.hasLowPass = true;
-      rec.lowPassHz = std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      rec.lowPass.freqHz =
+          std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      describe(rec.lowPass, i + 1, false);
+      rec.lowPass.freqHz =
+          std::exp(std::log(f0) + t * (std::log(f1) - std::log(f0)));
+      rec.lowPass.recommendedHz =
+          rec.lowPass.freqHz / std::pow(2.0, marginOctaves);
+      foundLow = true;
       break;
     }
+  }
+  if (!foundLow) {
+    rec.lowPass.reason = CrossoverReason::stillStrongAtLimit;
   }
   return rec;
 }

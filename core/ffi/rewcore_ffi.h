@@ -171,8 +171,36 @@ REW_EXPORT size_t rew_peq_request_size(void);
 // Recommend crossover edges for one measured driver (parallel freq/mag, length `n`).
 // Writes the high-pass edge to hpOut and low-pass edge to lpOut (Hz). Returns a bit
 // mask: bit0 set => high-pass suggested, bit1 set => low-pass suggested.
-REW_EXPORT int rew_recommend_crossover(const double* freq, const double* mag, size_t n,
-                            double dropDb, double* hpOut, double* lpOut);
+// Crossover advice for one measured driver.
+//
+// Struct-passed for the same reason the others are, and because a crossover
+// recommendation is not one number: it is a frequency, the slope the driver
+// already gives on its own, the slope to set in the DSP to reach the target
+// alignment, a confidence, and a reason.
+typedef struct rew_crossover_edge {
+  int present;
+  int reason;                        // rewcore::CrossoverReason
+  double freqHz;                     // measured -dropDb point
+  double recommendedHz;              // with the safety margin applied
+  double acousticSlopeDbPerOct;      // what the driver already does
+  double electricalSlopeDbPerOct;    // what to set in the DSP
+  double confidence;                 // 0..1
+} rew_crossover_edge;
+
+typedef struct rew_crossover_result {
+  rew_crossover_edge highPass;
+  rew_crossover_edge lowPass;
+  double passbandDb;
+} rew_crossover_result;
+
+REW_EXPORT int rew_recommend_crossover(const double* freq, const double* mag,
+                                       size_t n, double dropDb,
+                                       double targetAcousticDbPerOct,
+                                       double marginOctaves,
+                                       rew_crossover_result* out);
+
+// sizeof(rew_crossover_result), for the same layout assertion as the others.
+REW_EXPORT size_t rew_crossover_result_size(void);
 
 #ifdef __cplusplus
 }

@@ -809,6 +809,31 @@ class _WizardScreenState extends State<WizardScreen> {
                       ),
                     ),
                 ]),
+                if (rec != null) ...[
+                  const SizedBox(height: 8),
+                  for (final e in [
+                    (rec.highPass, 'High-pass'),
+                    (rec.lowPass, 'Low-pass')
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: e.$1.present
+                          ? Text(
+                              '${e.$2} ${e.$1.recommendedHz.toStringAsFixed(0)} Hz — '
+                              'set ${e.$1.electricalSlopeDbPerOct.toStringAsFixed(0)} dB/oct '
+                              'in the DSP.\n'
+                              'The driver already rolls off at about '
+                              '${e.$1.acousticSlopeDbPerOct.toStringAsFixed(0)} dB/oct here, '
+                              'so that lands near 24 dB/oct acoustic. '
+                              '${e.$1.strength} (${(e.$1.confidence * 100).round()}%). '
+                              'Measured -6 dB at ${e.$1.freqHz.toStringAsFixed(0)} Hz; '
+                              'the suggestion keeps a margin off that limit.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            )
+                          : Text('${e.$2}: none. ${e.$1.reason.explanation}',
+                              style: Theme.of(context).textTheme.bodySmall),
+                    ),
+                ],
                 if (rec?.highPassHz != null)
                   TextButton(
                     onPressed: () =>

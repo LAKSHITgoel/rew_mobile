@@ -34,19 +34,60 @@ SummationCheck checkSummation(double fc, Slope lowSlope, Slope highSlope,
 
 // Suggested crossover edges for a single measured driver, from where its response
 // falls off relative to its passband.
+// Why an edge was placed where it was, or why none was.
+enum class CrossoverReason : int {
+  measuredRolloff = 1,  // the driver measurably rolls off here
+  stillStrongAtLimit = 2,  // still at full level where the sweep stopped: the
+                           // driver plays past what was measured, so no
+                           // crossover is suggested on this side
+  notEnoughData = 3,       // too few usable points to say anything
+};
+
+// One edge of a driver's usable band.
+//
+// The distinction the app has to keep straight: the ACOUSTIC slope is what the
+// driver does in the car, and it is what matters. The ELECTRICAL slope is what
+// gets typed into the DSP. They differ by the driver's own natural roll-off,
+// which is why a crossover can never be recommended from a datasheet.
+struct CrossoverEdge {
+  bool present = false;
+  double freqHz = 0.0;  // where the response passes the -dropDb threshold
+
+  // What the driver already does on its own, measured either side of the edge.
+  double acousticSlopeDbPerOct = 0.0;
+  // What to set in the DSP so the acoustic result lands near the target
+  // alignment: the target minus what the driver already gives, rounded to a
+  // slope a DSP actually offers.
+  double electricalSlopeDbPerOct = 0.0;
+  // The edge with a safety margin applied — up for a high-pass, down for a
+  // low-pass — so a driver is not asked to work right at its limit.
+  double recommendedHz = 0.0;
+
+  double confidence = 0.0;  // 0..1
+  CrossoverReason reason = CrossoverReason::notEnoughData;
+};
+
 struct CrossoverRecommendation {
-  bool hasHighPass = false;  // driver rolls off at the bottom -> high-pass it here
-  double highPassHz = 0.0;
-  bool hasLowPass = false;   // driver rolls off at the top -> low-pass it here
-  double lowPassHz = 0.0;
-  double passbandDb = 0.0;   // reference passband level used
+  CrossoverEdge highPass;
+  CrossoverEdge lowPass;
+  double passbandDb = 0.0;  // reference passband level used
+
+  // Kept so existing callers keep working.
+  bool hasHighPass() const { return highPass.present; }
+  bool hasLowPass() const { return lowPass.present; }
 };
 
 // Estimate a driver's usable band from its measured response: the passband reference
 // is the median of the loudest region, and the edges are where the response drops
 // `dropDb` below it. If the response is still within `dropDb` at the measured extreme,
 // no crossover is suggested on that side (has*Pass == false).
+// `targetAcousticDbPerOct` is the alignment being aimed at: 24 dB/octave
+// (Linkwitz-Riley 4th order) is the usual choice for an active car system,
+// because two LR4 halves sum flat through the overlap.
+// `marginOctaves` keeps the recommendation off the driver's limit.
 CrossoverRecommendation recommendCrossover(const FreqResponse& driver,
-                                           double dropDb = 6.0);
+                                           double dropDb = 6.0,
+                                           double targetAcousticDbPerOct = 24.0,
+                                           double marginOctaves = 0.33);
 
 }  // namespace rewcore

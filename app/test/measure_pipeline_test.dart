@@ -332,6 +332,59 @@ void main() {
     expect(displayDiffers, isTrue,
         reason: 'the display smoothing setting did nothing');
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('a crossover recommendation explains itself and separates acoustic '
+      'from electrical slope', () {
+    final core = Rewcore.open(libraryPath: lib);
+    // A driver already rolling off steeply either side.
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      final f = math.exp(math.log(20) + t * (math.log(20000) - math.log(20)));
+      freq.add(f);
+      // ~24 dB/oct either side of a 500 Hz - 5 kHz passband.
+      var db = 0.0;
+      if (f < 500) db = -24 * (math.log(500 / f) / math.ln2);
+      if (f > 5000) db = -24 * (math.log(f / 5000) / math.ln2);
+      mag.add(db);
+    }
+    final rec = core.recommendCrossover(FreqResponse(freq, mag));
+
+    expect(rec.highPass.present, isTrue);
+    expect(rec.lowPass.present, isTrue);
+    expect(rec.highPass.reason, CrossoverReason.measuredRolloff);
+
+    // It must measure the driver's own roll-off rather than assume it...
+    expect(rec.highPass.acousticSlopeDbPerOct, greaterThan(10));
+    // ...and therefore ask the DSP for less than the full target.
+    expect(rec.highPass.electricalSlopeDbPerOct, lessThan(24));
+
+    // Margin: high-pass above the measured edge, low-pass below it.
+    expect(rec.highPass.recommendedHz, greaterThan(rec.highPass.freqHz));
+    expect(rec.lowPass.recommendedHz, lessThan(rec.lowPass.freqHz));
+
+    expect(rec.highPass.confidence, greaterThan(0));
+    expect(rec.highPass.strength, isNotEmpty);
+  });
+
+  test('a full-range driver gets no invented crossover', () {
+    final core = Rewcore.open(libraryPath: lib);
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      freq.add(math.exp(math.log(20) + t * (math.log(20000) - math.log(20))));
+      mag.add(0);
+    }
+    final rec = core.recommendCrossover(FreqResponse(freq, mag));
+    expect(rec.highPass.present, isFalse);
+    expect(rec.lowPass.present, isFalse);
+    expect(rec.highPass.reason, CrossoverReason.stillStrongAtLimit);
+    expect(rec.highPass.reason.explanation, contains('sweep'));
+  });
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.

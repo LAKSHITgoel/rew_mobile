@@ -196,22 +196,39 @@ size_t rew_fit_peq(const rew_peq_request* req) {
   return res.bands.size();
 }
 
+size_t rew_crossover_result_size(void) {
+  return sizeof(rew_crossover_result);
+}
+
+static void fillEdge(rew_crossover_edge* dst, const CrossoverEdge& src) {
+  dst->present = src.present ? 1 : 0;
+  dst->reason = static_cast<int>(src.reason);
+  dst->freqHz = src.freqHz;
+  dst->recommendedHz = src.recommendedHz;
+  dst->acousticSlopeDbPerOct = src.acousticSlopeDbPerOct;
+  dst->electricalSlopeDbPerOct = src.electricalSlopeDbPerOct;
+  dst->confidence = src.confidence;
+}
+
 int rew_recommend_crossover(const double* freq, const double* mag, size_t n,
-                            double dropDb, double* hpOut, double* lpOut) {
-  if (!freq || !mag) return 0;
+                            double dropDb, double targetAcousticDbPerOct,
+                            double marginOctaves, rew_crossover_result* out) {
+  if (!freq || !mag || !out) return 0;
   FreqResponse driver;
   driver.freqHz.assign(freq, freq + n);
   driver.magDb.assign(mag, mag + n);
-  const CrossoverRecommendation rec = recommendCrossover(driver, dropDb);
+  const CrossoverRecommendation rec = recommendCrossover(
+      driver, dropDb,
+      targetAcousticDbPerOct > 0.0 ? targetAcousticDbPerOct : 24.0,
+      marginOctaves > 0.0 ? marginOctaves : 0.33);
+
+  fillEdge(&out->highPass, rec.highPass);
+  fillEdge(&out->lowPass, rec.lowPass);
+  out->passbandDb = rec.passbandDb;
+
   int mask = 0;
-  if (rec.hasHighPass) {
-    mask |= 1;
-    if (hpOut) *hpOut = rec.highPassHz;
-  }
-  if (rec.hasLowPass) {
-    mask |= 2;
-    if (lpOut) *lpOut = rec.lowPassHz;
-  }
+  if (rec.highPass.present) mask |= 1;
+  if (rec.lowPass.present) mask |= 2;
   return mask;
 }
 

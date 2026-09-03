@@ -382,10 +382,104 @@ class SweepBand {
 }
 
 /// Suggested crossover edges for one measured driver (from rewcore).
+/// Why a crossover edge was placed, or why none was. Mirrors
+/// rewcore::CrossoverReason.
+enum CrossoverReason {
+  measuredRolloff(1),
+  stillStrongAtLimit(2),
+  notEnoughData(3),
+  unknown(0);
+
+  const CrossoverReason(this.code);
+  final int code;
+
+  String get short => switch (this) {
+        CrossoverReason.measuredRolloff => 'measured roll-off',
+        CrossoverReason.stillStrongAtLimit => 'still at full level here',
+        CrossoverReason.notEnoughData => 'not enough usable data',
+        CrossoverReason.unknown => '',
+      };
+
+  String get explanation => switch (this) {
+        CrossoverReason.measuredRolloff =>
+          'Taken from where this driver actually falls off in your car, not '
+              'from what the driver is rated for.',
+        CrossoverReason.stillStrongAtLimit =>
+          'The driver was still at full level where the sweep ended, so it '
+              'plays beyond what was measured. No crossover is suggested on '
+              'this side — measure a wider band if you need one.',
+        CrossoverReason.notEnoughData =>
+          'Too few usable points to say anything. Check the measurement first.',
+        CrossoverReason.unknown => '',
+      };
+}
+
+CrossoverReason crossoverReasonFromCode(int code) =>
+    CrossoverReason.values.firstWhere((r) => r.code == code,
+        orElse: () => CrossoverReason.unknown);
+
+/// One edge of a driver's usable band, with everything needed to decide what to
+/// type into the DSP — and how much to trust it.
+class CrossoverEdge {
+  const CrossoverEdge({
+    required this.present,
+    required this.freqHz,
+    required this.recommendedHz,
+    required this.acousticSlopeDbPerOct,
+    required this.electricalSlopeDbPerOct,
+    required this.confidence,
+    required this.reason,
+  });
+
+  const CrossoverEdge.absent(this.reason)
+      : present = false,
+        freqHz = 0,
+        recommendedHz = 0,
+        acousticSlopeDbPerOct = 0,
+        electricalSlopeDbPerOct = 0,
+        confidence = 0;
+
+  final bool present;
+
+  /// Where the response passes the -6 dB point.
+  final double freqHz;
+
+  /// The same edge with a safety margin applied, which is what to actually set:
+  /// a high-pass goes above the measured edge, a low-pass below it, so the
+  /// driver is not asked to work right at its limit.
+  final double recommendedHz;
+
+  /// What the driver already does on its own, in the car.
+  final double acousticSlopeDbPerOct;
+
+  /// What to set in the DSP so the acoustic result lands near the target.
+  /// The difference between the two is exactly why a crossover cannot be
+  /// chosen from a datasheet.
+  final double electricalSlopeDbPerOct;
+
+  final double confidence;
+  final CrossoverReason reason;
+
+  String get strength => confidence >= 0.6
+      ? 'confident'
+      : confidence >= 0.35
+          ? 'reasonable'
+          : 'low confidence — verify by ear';
+}
+
 class CrossoverRecommendation {
-  const CrossoverRecommendation({this.highPassHz, this.lowPassHz});
-  final double? highPassHz;
-  final double? lowPassHz;
+  const CrossoverRecommendation({
+    this.highPass = const CrossoverEdge.absent(CrossoverReason.unknown),
+    this.lowPass = const CrossoverEdge.absent(CrossoverReason.unknown),
+    this.passbandDb = 0,
+  });
+
+  final CrossoverEdge highPass;
+  final CrossoverEdge lowPass;
+  final double passbandDb;
+
+  double? get highPassHz => highPass.present ? highPass.recommendedHz : null;
+  double? get lowPassHz => lowPass.present ? lowPass.recommendedHz : null;
 }
 
 /// Crossover slope options, mirroring rewcore's `Slope`.
