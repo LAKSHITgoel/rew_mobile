@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lets the share sheet read exported graphs/CSVs out of the app's own
+     external files dir without needing storage permissions. -->
+<paths>
+    <external-files-path name="exports" path="exports/" />
+    <files-path name="internal" path="." />
+</paths>

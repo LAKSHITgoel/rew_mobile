@@ -3,21 +3,41 @@
 
 /// A magnitude frequency response sampled on a (log) frequency grid.
 class FreqResponse {
-  FreqResponse(this.freqHz, this.magDb)
+  FreqResponse(this.freqHz, this.magDb, [this.phaseDeg = const []])
       : assert(freqHz.length == magDb.length);
 
   final List<double> freqHz;
   final List<double> magDb;
 
+  /// Unwrapped phase in degrees. Empty where phase is not meaningful (e.g. after
+  /// power-averaging spatially separated captures, which discards it).
+  final List<double> phaseDeg;
+
+  bool get hasPhase => phaseDeg.length == freqHz.length;
   bool get isEmpty => freqHz.isEmpty;
   int get length => freqHz.length;
 
-  Map<String, dynamic> toJson() => {'freqHz': freqHz, 'magDb': magDb};
+  Map<String, dynamic> toJson() =>
+      {'freqHz': freqHz, 'magDb': magDb, 'phaseDeg': phaseDeg};
 
   factory FreqResponse.fromJson(Map<String, dynamic> j) => FreqResponse(
         (j['freqHz'] as List).map((e) => (e as num).toDouble()).toList(),
         (j['magDb'] as List).map((e) => (e as num).toDouble()).toList(),
+        ((j['phaseDeg'] ?? const []) as List)
+            .map((e) => (e as num).toDouble())
+            .toList(),
       );
+}
+
+/// A capture: its magnitude response plus how loud it actually was.
+///
+/// The level is what lets you match drivers to each other and confirm you
+/// measured at a sane volume; it is dBFS, which becomes dB SPL once an offset
+/// has been calibrated (differences between channels need no offset at all).
+class Measurement {
+  const Measurement({required this.response, required this.levelDbfs});
+  final FreqResponse response;
+  final double levelDbfs;
 }
 
 /// One parametric EQ band, as entered into the DSP's own app.
@@ -50,6 +70,43 @@ class EqResult {
   final double finalErrorDb;
 }
 
+/// A frequency band to sweep and analyse.
+///
+/// Limiting the sweep to the driver under test matters for safety as much as
+/// accuracy: a full-range sweep into a tweeter can destroy it, and sweeping a
+/// sub above its passband just measures the rest of the car.
+class SweepBand {
+  const SweepBand(this.label, this.fLo, this.fHi);
+
+  final String label;
+  final double fLo;
+  final double fHi;
+
+  static const full = SweepBand('Full range · 20 Hz – 20 kHz', 20, 20000);
+  static const sub = SweepBand('Subwoofer · 20 – 200 Hz', 20, 200);
+  static const midbass = SweepBand('Mid / woofer · 50 Hz – 2 kHz', 50, 2000);
+  static const midrange = SweepBand('Midrange · 200 Hz – 5 kHz', 200, 5000);
+  static const tweeter = SweepBand('Tweeter · 2 – 20 kHz', 2000, 20000);
+
+  /// True when the band starts low enough to endanger a tweeter.
+  bool get isFullRange => fLo <= 100 && fHi >= 10000;
+
+  static const presets = <SweepBand>[full, sub, midbass, midrange, tweeter];
+
+  /// A user-defined band, labelled from its own range. Used both for a fresh
+  /// custom range and for editing a preset (the edited copy is custom).
+  factory SweepBand.custom(double lo, double hi) =>
+      SweepBand('Custom · ${_fmtHz(lo)} – ${_fmtHz(hi)}', lo, hi);
+
+  static String _fmtHz(double f) => f >= 1000
+      ? '${(f / 1000).toStringAsFixed(f % 1000 == 0 ? 0 : 1)} kHz'
+      : '${f.round()} Hz';
+
+  /// Clamped to something a 48 kHz sweep can actually contain.
+  static const double minHz = 10;
+  static const double maxHz = 21000;
+}
+
 /// Suggested crossover edges for one measured driver (from rewcore).
 class CrossoverRecommendation {
   const CrossoverRecommendation({this.highPassHz, this.lowPassHz});
@@ -68,19 +125,26 @@ extension XoverSlopeLabel on XoverSlope {
       };
 }
 
+/// What a driver is for. Decides the sweep band it may safely be given.
+enum DriverRole { tweeter, midrange, midbass, fullRange, sub }
+
 /// A speaker channel in the car, isolated (soloed in the DSP app) for measuring.
+/// One Channel == one thing the DSP can control on its own.
 class Channel {
-  const Channel(this.id, this.name);
+  const Channel(this.id, this.name, [this.role = DriverRole.fullRange]);
   final String id;
   final String name;
+  final DriverRole role;
 
+  /// Fallback list used only to look up a display name for an id that is not in
+  /// the current system setup (e.g. an old saved project).
   static const List<Channel> defaults = [
-    Channel('fl_tweeter', 'Front L Tweeter'),
-    Channel('fl_mid', 'Front L Midrange'),
-    Channel('fr_tweeter', 'Front R Tweeter'),
-    Channel('fr_mid', 'Front R Midrange'),
-    Channel('rl', 'Rear L (coax)'),
-    Channel('rr', 'Rear R (coax)'),
-    Channel('sub', 'Subwoofer'),
+    Channel('fl_tweeter', 'Front L Tweeter', DriverRole.tweeter),
+    Channel('fl_mid', 'Front L Midrange', DriverRole.midrange),
+    Channel('fr_tweeter', 'Front R Tweeter', DriverRole.tweeter),
+    Channel('fr_mid', 'Front R Midrange', DriverRole.midrange),
+    Channel('rl', 'Rear L', DriverRole.fullRange),
+    Channel('rr', 'Rear R', DriverRole.fullRange),
+    Channel('sub', 'Subwoofer', DriverRole.sub),
   ];
 }

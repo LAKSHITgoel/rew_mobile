@@ -18,6 +18,41 @@ struct SweepSpec {
 // Exponential (log) sine sweep, a.k.a. Farina sweep, for the measurement stimulus.
 std::vector<double> generateExpSweep(const SweepSpec& spec);
 
+// ---- Test signals (manual time alignment / centring by ear) ---------------
+
+struct NoiseSpec {
+  double fs = 48000.0;
+  double durationSec = 2.0;  // one loopable block
+  double fLo = 0.0;          // high-pass edge; 0 = none
+  double fHi = 0.0;          // low-pass edge; 0 = none
+  double amplitude = 0.3;
+  unsigned seed = 1;
+};
+
+// Pink noise (-3 dB/octave), optionally band-limited.
+//
+// Pink is the standard signal for judging a centre image by ear: unlike a sine
+// it gives the ear broadband localisation cues, and unlike white noise it is not
+// so treble-heavy that it fatigues or over-weights the tweeters. Band-limiting to
+// roughly 200 Hz - 4 kHz concentrates it where human localisation is sharpest.
+std::vector<double> generatePinkNoise(const NoiseSpec& spec);
+
+// ---- Levels ---------------------------------------------------------------
+
+// RMS level of a buffer in dBFS, using the convention that a full-scale SINE
+// reads -3.01 dBFS (i.e. dBFS is referenced to a full-scale square). This is the
+// same convention miniDSP use for the UMIK-1 sensitivity figure.
+double rmsDbfs(const std::vector<double>& x);
+
+// Convert a measured dBFS level to dB SPL given a calibration offset.
+//
+// The offset cannot be derived from the mic's sensitivity alone on a phone: the
+// capture gain of the USB/Android path is not known (the UMIK-1 even advertises
+// its own "Gain: 18dB"), so absolute SPL needs a one-time calibration against a
+// reference meter. RELATIVE levels between channels are exact without it, which
+// is what level-matching drivers actually needs.
+inline double splFromDbfs(double dbfs, double offsetDb) { return dbfs + offsetDb; }
+
 // ---- Measurement ----------------------------------------------------------
 
 // Regularized deconvolution of a recorded signal by the emitted stimulus, in the
@@ -37,17 +72,36 @@ double irPeakIndex(const std::vector<double>& ir);
 
 // ---- Frequency response ---------------------------------------------------
 
-// A magnitude frequency response sampled at a set of frequencies.
+// A frequency response sampled at a set of frequencies.
+//
+// `phaseDeg` is optional (empty where phase is not meaningful, e.g. after a
+// power average of spatially separated captures, which destroys phase). When
+// present it is UNWRAPPED, so a pure delay shows as a straight downward ramp
+// rather than sawtoothing between +-180.
 struct FreqResponse {
   std::vector<double> freqHz;
   std::vector<double> magDb;
+  std::vector<double> phaseDeg;
+
+  bool hasPhase() const { return phaseDeg.size() == freqHz.size(); }
 };
+
+// Remove the +-180 wraps from a phase curve in place, so it can be interpolated
+// and read as a continuous quantity.
+void unwrapPhaseDeg(std::vector<double>& phaseDeg);
 
 // Compute the (unsmoothed) magnitude response from an impulse response.
 // A half-Hann window of `windowLen` samples is applied around the IR peak before the
 // FFT to time-gate reflections; pass 0 to use the whole IR.
+// When `timeReference` is true the impulse response is rotated so its peak sits
+// at t=0 before the transform. That removes the bulk propagation delay, which is
+// essential for phase to be readable: over Bluetooth the path delay is tens of
+// milliseconds, which alone is thousands of degrees of phase at 1 kHz and swamps
+// the shape you actually care about. Magnitude is unaffected. Leave it false to
+// measure the delay itself.
 FreqResponse frequencyResponse(const std::vector<double>& ir, double fs,
-                               std::size_t windowLen = 0);
+                               std::size_t windowLen = 0,
+                               bool timeReference = false);
 
 // Fractional-octave smoothing (e.g. fractionOfOctave = 24 -> 1/24 octave), the kind
 // used to make measured car responses readable and to drive the EQ fitter.

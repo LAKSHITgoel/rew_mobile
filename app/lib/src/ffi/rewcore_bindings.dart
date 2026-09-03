@@ -16,6 +16,18 @@ typedef _RewGenerateSweepC = ffi.Size Function(
 typedef RewGenerateSweepDart = int Function(
     double, double, double, double, ffi.Pointer<ffi.Double>, int);
 
+// double rew_rms_dbfs(const double* samples, size_t n);
+typedef _RewRmsDbfsC = ffi.Double Function(ffi.Pointer<ffi.Double>, ffi.Size);
+typedef RewRmsDbfsDart = double Function(ffi.Pointer<ffi.Double>, int);
+
+// size_t rew_generate_noise(fs, durationSec, fLo, fHi, amplitude, seed, out*, cap);
+typedef _RewGenerateNoiseC = ffi.Size Function(
+    ffi.Double, ffi.Double, ffi.Double, ffi.Double, ffi.Double,
+    ffi.UnsignedInt, ffi.Pointer<ffi.Double>, ffi.Size);
+typedef RewGenerateNoiseDart = int Function(
+    double, double, double, double, double, int,
+    ffi.Pointer<ffi.Double>, int);
+
 // size_t rew_measure_fr(emitted*, emittedLen, recorded*, recordedLen, fs,
 //                       fMin, fMax, smoothFrac, points,
 //                       calFreq*, calGain*, calN, freqOut*, magOut*, cap);
@@ -23,22 +35,24 @@ typedef _RewMeasureFrC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Size, ffi.Pointer<ffi.Double>, ffi.Size,
     ffi.Double, ffi.Double, ffi.Double, ffi.Double, ffi.Size,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size);
+    ffi.Int, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, ffi.Size);
 typedef RewMeasureFrDart = int Function(
     ffi.Pointer<ffi.Double>, int, ffi.Pointer<ffi.Double>, int,
     double, double, double, double, int,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int);
+    int, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, int);
 
 // size_t rew_fit_peq_flat(freq*, mag*, n, fs, fMin, fMax, maxBands,
 //                         freqOut*, gainOut*, qOut*, errOut*);
 typedef _RewFitPeqFlatC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
-    ffi.Double, ffi.Double, ffi.Int, ffi.Pointer<ffi.Double>,
+    ffi.Double, ffi.Double, ffi.Int, ffi.Double, ffi.Pointer<ffi.Double>,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
 typedef RewFitPeqFlatDart = int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
-    double, double, int, ffi.Pointer<ffi.Double>,
+    double, double, int, double, ffi.Pointer<ffi.Double>,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>);
 
 // int rew_recommend_crossover(freq*, mag*, n, dropDb, hpOut*, lpOut*);
@@ -57,6 +71,11 @@ class RewcoreBindings {
         rewGenerateSweep = lib
             .lookupFunction<_RewGenerateSweepC, RewGenerateSweepDart>(
                 'rew_generate_sweep'),
+        rewRmsDbfs =
+            lib.lookupFunction<_RewRmsDbfsC, RewRmsDbfsDart>('rew_rms_dbfs'),
+        rewGenerateNoise =
+            lib.lookupFunction<_RewGenerateNoiseC, RewGenerateNoiseDart>(
+                'rew_generate_noise'),
         rewMeasureFr = lib
             .lookupFunction<_RewMeasureFrC, RewMeasureFrDart>('rew_measure_fr'),
         rewFitPeqFlat = lib.lookupFunction<_RewFitPeqFlatC, RewFitPeqFlatDart>(
@@ -67,13 +86,19 @@ class RewcoreBindings {
 
   final RewVersionDart rewVersion;
   final RewGenerateSweepDart rewGenerateSweep;
+  final RewGenerateNoiseDart rewGenerateNoise;
+  final RewRmsDbfsDart rewRmsDbfs;
   final RewMeasureFrDart rewMeasureFr;
   final RewFitPeqFlatDart rewFitPeqFlat;
   final RewRecommendCrossoverDart rewRecommendCrossover;
 
   /// Opens the rewcore native library for the current platform. The library name
   /// matches the `rewcore_ffi` plugin (see packages/rewcore_ffi).
-  static ffi.DynamicLibrary open() {
+  /// [libraryPath], when given, is opened directly instead of resolving by
+  /// platform. Tests use it to load a locally built dylib, since a plain
+  /// `dart`/`flutter test` process has no rewcore symbols linked in.
+  static ffi.DynamicLibrary open({String? libraryPath}) {
+    if (libraryPath != null) return ffi.DynamicLibrary.open(libraryPath);
     if (Platform.isAndroid || Platform.isLinux) {
       return ffi.DynamicLibrary.open('librewcore_ffi.so');
     }

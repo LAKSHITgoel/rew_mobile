@@ -22,7 +22,9 @@ tools/          rewcli — desktop CLI over the core (sweep|measure|eq|xover)
 packages/
   rewcore_ffi/  Flutter FFI plugin: compiles core/ into a loadable native lib
 app/            Flutter app (lib/ + test/); mock audio backend runs with no hardware
-android/native/ Kotlin audio plugin (AudioRecord USB in + AudioTrack out) — reference
+  android/      Android host build; the Kotlin audio plugin lives here, wired to the
+                `rew_mobile/audio` channel (com/rewmobile/audio/RewAudioPlugin.kt)
+android/native/ Android design notes + libusb fallback plan (no code)
 ios/native/     Swift audio plugin (AVAudioEngine + AVAudioSession) — reference
 ```
 
@@ -64,8 +66,15 @@ flutter run --dart-define=USE_MOCK_AUDIO=true   # no mic/car needed
 
 ## Status boundary (important)
 
-- **Verified here:** `core/` + `tools/` (compiled, 43 ctest checks).
-- **Written, needs an SDK to compile:** `app/` Dart, `packages/rewcore_ffi/`.
-- **Written, needs a device to validate:** `android/native`, `ios/native`, and above
+- **Verified here:** `core/` + `tools/` (compiled, 43 ctest checks); `app/` Dart
+  (`flutter analyze` clean, 16 tests pass) and `packages/rewcore_ffi/` (its
+  `src/CMakeLists.txt` builds `librewcore_ffi` exporting all 5 `rew_*` symbols).
+- **The Dart↔C ABI is verified end-to-end** by `app/test/ffi_smoke_test.dart`, which
+  loads the real compiled library and checks every `rew_*` entry point (including
+  calibration-array marshaling and out-params). Build it first, or the test skips:
+  `cmake -S packages/rewcore_ffi/src -B build-ffi && cmake --build build-ffi -j`.
+- **Written, needs the Android SDK/NDK (or Xcode + CocoaPods) to compile:** the Android
+  and iOS/macOS host builds of `app/` and `packages/rewcore_ffi/`.
+- **Written, needs a device to validate:** the Kotlin/Swift audio layers, and above
   all **Spike #0** — proving simultaneous wireless-sweep-out + USB-mic-in gives a clean
   measurement. Do that before trusting any on-device numbers.

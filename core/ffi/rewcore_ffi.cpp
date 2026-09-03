@@ -28,17 +28,40 @@ size_t rew_generate_sweep(double fs, double f1, double f2, double durationSec,
   return sweep.size();
 }
 
+double rew_rms_dbfs(const double* samples, size_t n) {
+  if (!samples || n == 0) return -240.0;
+  return rmsDbfs(std::vector<double>(samples, samples + n));
+}
+
+size_t rew_generate_noise(double fs, double durationSec, double fLo, double fHi,
+                          double amplitude, unsigned int seed, double* out,
+                          size_t cap) {
+  NoiseSpec spec;
+  spec.fs = fs;
+  spec.durationSec = durationSec;
+  spec.fLo = fLo;
+  spec.fHi = fHi;
+  spec.amplitude = amplitude;
+  spec.seed = seed;
+  const std::vector<double> noise = generatePinkNoise(spec);
+  if (out == nullptr) return noise.size();
+  if (cap < noise.size()) return 0;
+  std::copy(noise.begin(), noise.end(), out);
+  return noise.size();
+}
+
 size_t rew_measure_fr(const double* emitted, size_t emittedLen,
                       const double* recorded, size_t recordedLen, double fs,
                       double fMin, double fMax, double smoothFrac, size_t points,
                       const double* calFreq, const double* calGain, size_t calN,
-                      double* freqOut, double* magOut, size_t cap) {
+                      int timeReferencePhase, double* freqOut, double* magOut,
+                      double* phaseOut, size_t cap) {
   if (!emitted || !recorded || !freqOut || !magOut) return 0;
   std::vector<double> em(emitted, emitted + emittedLen);
   std::vector<double> rec(recorded, recorded + recordedLen);
 
   const std::vector<double> ir = deconvolve(em, rec);
-  FreqResponse fr = frequencyResponse(ir, fs);
+  FreqResponse fr = frequencyResponse(ir, fs, 0, timeReferencePhase != 0);
   if (smoothFrac > 0.0) fr = smoothFractionalOctave(fr, smoothFrac);
 
   if (calFreq && calGain && calN > 0) {
@@ -53,12 +76,16 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
   for (size_t i = 0; i < grid.freqHz.size(); ++i) {
     freqOut[i] = grid.freqHz[i];
     magOut[i] = grid.magDb[i];
+    if (phaseOut) {
+      phaseOut[i] = grid.hasPhase() ? grid.phaseDeg[i] : 0.0;
+    }
   }
   return grid.freqHz.size();
 }
 
 size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
-                        double fMin, double fMax, int maxBands, double* freqOut,
+                        double fMin, double fMax, int maxBands,
+                        double targetPercentile, double* freqOut,
                         double* gainOut, double* qOut, double* errOut) {
   if (!freq || !mag || !freqOut || !gainOut || !qOut) return 0;
   FreqResponse measured;
@@ -70,6 +97,7 @@ size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double 
   c.fMin = fMin;
   c.fMax = fMax;
   c.maxBands = maxBands;
+  if (targetPercentile > 0.0) c.targetPercentile = targetPercentile;
 
   const PeqFitResult res = fitPeq(measured, flatTarget(measured), c);
   for (size_t i = 0; i < res.bands.size(); ++i) {

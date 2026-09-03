@@ -14,17 +14,18 @@ logic; the rest of the platform folders come from the plugin template.
 - `ffigen.yaml` — regenerate Dart bindings from `core/ffi/rewcore_ffi.h`.
 - `pubspec.yaml` — declares this as an `ffiPlugin`.
 
-## Bootstrap (on a machine with the Flutter SDK)
+## Bootstrap
+
+Already done — all five platform folders are present (`android/`, `ios/`, `linux/`,
+`macos/`, `windows/`). The iOS and macOS podspecs read the core through a `core`
+symlink in each of those folders pointing at `../../../core`; if a checkout loses them
+(some archives don't preserve symlinks), recreate with:
 
 ```sh
-cd packages
-flutter create --template=plugin_ffi --platforms=android,ios,linux,macos,windows \
-  --org com.rewmobile rewcore_ffi_scaffold
-# Merge the generated scaffold's missing platform folders into this package
-# (keeping the src/CMakeLists.txt, gradle, podspec, and pubspec here).
+cd packages/rewcore_ffi && ln -sfn ../../../core ios/core && ln -sfn ../../../core macos/core
 ```
 
-Then depend on it from the app (`app/pubspec.yaml`):
+The app depends on it from `app/pubspec.yaml`:
 
 ```yaml
 dependencies:

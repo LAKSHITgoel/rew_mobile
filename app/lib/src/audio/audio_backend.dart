@@ -10,6 +10,17 @@ class MicInfo {
   final String? name;
 }
 
+/// One input-level reading from the microphone.
+class MicLevel {
+  const MicLevel({required this.rmsDb, required this.peakDb});
+  final double rmsDb;
+  final double peakDb;
+
+  /// Roughly "is the mic hearing anything at all". Room tone on a UMIK-1 sits
+  /// well below this; speech or a tap sits well above.
+  bool get hasSignal => rmsDb > -60;
+}
+
 abstract class AudioBackend {
   /// Whether a UMIK-1 (or other USB mic) is currently attached.
   Future<MicInfo> micStatus();
@@ -23,6 +34,17 @@ abstract class AudioBackend {
     required Float64List sweep,
     required double fs,
   });
+
+  /// Live input level, for confirming the mic is connected AND hearing sound.
+  /// Only produces values between [startInputLevel] and [stopInputLevel].
+  Stream<MicLevel> get inputLevels;
+  Future<void> startInputLevel();
+  Future<void> stopInputLevel();
+
+  /// Loop [samples] out as media until [stopTone] — the centring signal for
+  /// manual time alignment.
+  Future<void> startTone({required Float64List samples, required double fs});
+  Future<void> stopTone();
 
   Future<void> dispose();
 }

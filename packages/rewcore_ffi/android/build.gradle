@@ -1,27 +1,24 @@
-// Android build for the rewcore_ffi plugin: compiles ../src/CMakeLists.txt (the
-// rewcore core) into librewcore_ffi.so for each ABI. Mirrors what
-// `flutter create --template=plugin_ffi` produces; adjust the namespace/versions to
-// match your Flutter/AGP toolchain.
-group 'com.rewmobile.rewcore_ffi'
-version '0.1.0'
-
-buildscript {
-    repositories { google(); mavenCentral() }
-    dependencies { classpath 'com.android.tools.build:gradle:8.1.0' }
+// Android build for the rewcore_ffi FFI plugin: compiles ../src/CMakeLists.txt (the
+// shared rewcore C++ core) into librewcore_ffi.so for each ABI, which the app then
+// opens with DynamicLibrary.open('librewcore_ffi.so').
+//
+// The Android Gradle Plugin version comes from the *app's* settings.gradle.kts
+// (pluginManagement). This file must NOT declare its own buildscript/classpath —
+// pinning a different AGP here clashes with the app's and fails the build.
+plugins {
+    id 'com.android.library'
 }
 
-rootProject.allprojects {
-    repositories { google(); mavenCentral() }
-}
-
-apply plugin: 'com.android.library'
+group = 'com.rewmobile.rewcore_ffi'
+version = '0.1.0'
 
 android {
-    namespace 'com.rewmobile.rewcore_ffi'
-    compileSdk 34
+    namespace = 'com.rewmobile.rewcore_ffi'
+    compileSdk = 36
+    ndkVersion = '28.2.13676358'
 
     defaultConfig {
-        minSdk 21  // USB host + AudioRecord PCM_FLOAT
+        minSdk = 24
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_shared'
@@ -32,7 +29,8 @@ android {
 
     externalNativeBuild {
         cmake {
-            path '../src/CMakeLists.txt'
+            path = file('../src/CMakeLists.txt')
+            version = '3.22.1'
         }
     }
 }

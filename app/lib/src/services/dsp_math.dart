@@ -36,16 +36,54 @@ double peakingMagnitudeDb({
   return 20 * (math.log(num / den) / math.ln10);
 }
 
+/// What the EQ does to a measured response.
+class EqPreview {
+  const EqPreview(this.predicted, this.levelChangeDb);
+
+  /// The predicted curve, shifted so its level matches the measured one.
+  final FreqResponse predicted;
+
+  /// How much quieter (negative) the EQ actually makes the system. Cut-oriented
+  /// EQ always costs level; you make it back on the DSP's output gain.
+  final double levelChangeDb;
+}
+
 /// Predicted response after applying a cascade of PEQ bands to [measured].
-FreqResponse applyEqPreview(FreqResponse measured, List<PeqBand> bands, double fs) {
-  final out = List<double>.filled(measured.length, 0);
+///
+/// By default the result is LEVEL-MATCHED to the measured curve. Without that,
+/// a cut-oriented fit just draws a lower copy of the input and looks like it is
+/// only turning things down — the flattening is invisible because the eye reads
+/// the offset, not the shape. The offset is reported separately instead.
+EqPreview applyEqPreview(FreqResponse measured, List<PeqBand> bands, double fs,
+    {bool levelMatch = true}) {
+  final raw = List<double>.filled(measured.length, 0);
   for (var i = 0; i < measured.length; i++) {
     var db = measured.magDb[i];
     for (final b in bands) {
       db += peakingMagnitudeDb(
           evalHz: measured.freqHz[i], f0: b.freqHz, fs: fs, gainDb: b.gainDb, q: b.q);
     }
-    out[i] = db;
+    raw[i] = db;
   }
-  return FreqResponse(List<double>.from(measured.freqHz), out);
+
+  // Average the shift over the usable band only, so a dead region cannot skew it.
+  final sorted = List<double>.from(measured.magDb)..sort();
+  final passband = sorted.isEmpty
+      ? 0.0
+      : sorted.sublist((sorted.length * 3) ~/ 4).reduce((a, b) => a + b) /
+          (sorted.length - (sorted.length * 3) ~/ 4);
+  var sum = 0.0;
+  var n = 0;
+  for (var i = 0; i < measured.length; i++) {
+    if (measured.magDb[i] < passband - 25) continue;
+    sum += raw[i] - measured.magDb[i];
+    n++;
+  }
+  final offset = n > 0 ? sum / n : 0.0;
+
+  final shown = levelMatch
+      ? [for (final v in raw) v - offset]
+      : raw;
+  return EqPreview(
+      FreqResponse(List<double>.from(measured.freqHz), shown), offset);
 }

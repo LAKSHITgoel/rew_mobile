@@ -31,6 +31,32 @@ struct PeqConstraints {
   double minSpacingOctave = 0.15; // don't stack two bands closer than this
   double edgeGuardOctave = 0.2;   // ignore corrections within this of fMin/fMax
                                   // (the sweep's extreme edges are low-confidence)
+  // Never BOOST where the driver has essentially no output: if the measured level
+  // sits more than this far below the passband, a boost is trying to resurrect
+  // something that isn't there — it burns amplifier headroom and can wreck drivers.
+  // Cuts are always allowed. Set very large to disable the guard.
+  double maxBoostBelowPassbandDb = 10.0;
+  // Ignore entirely anything this far below the passband. Such regions are
+  // outside the driver's range (or noise), so there is nothing to correct there
+  // — and, crucially, letting them into the error metric drags the notion of
+  // "flat" far below where the driver actually plays, which makes the fitter
+  // attenuate the whole response instead of levelling it.
+  double fitFloorBelowPassbandDb = 25.0;
+  // Where in the usable band's level distribution the flat target sits, as a
+  // percentile. Low values put the target under most of the response so the fit
+  // comes out mostly CUTS, which is deliberate: peaks are real and cuttable,
+  // whereas dips are usually cancellation nulls that boosting cannot fill — it
+  // only burns headroom. The cost is that the whole response ends up quieter,
+  // which you make back on the DSP's output gain.
+  double targetPercentile = 0.25;
+  // Boosting is only ever allowed into BROAD dips. A narrow dip is a
+  // cancellation null: the cancellation removes the boost along with everything
+  // else, so you burn amplifier power and headroom for no audible gain. Broad
+  // dips are usually genuine response shape and do lift. Q above this is treated
+  // as a null and left alone; boosts are capped separately because even a real
+  // dip is not worth unlimited power.
+  double maxBoostQ = 2.0;
+  double maxBoostDb = 6.0;
 };
 
 struct PeqFitResult {

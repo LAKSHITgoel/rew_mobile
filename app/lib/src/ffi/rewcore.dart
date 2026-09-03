@@ -17,7 +17,8 @@ class Rewcore {
 
   /// Opens the native library and resolves symbols. Throws if unavailable
   /// (e.g. running pure-Dart tests without the native lib linked).
-  factory Rewcore.open() => Rewcore._(RewcoreBindings(RewcoreBindings.open()));
+  factory Rewcore.open({String? libraryPath}) =>
+      Rewcore._(RewcoreBindings(RewcoreBindings.open(libraryPath: libraryPath)));
 
   String version() => _b.rewVersion().cast<Utf8>().toDartString();
 
@@ -38,6 +39,40 @@ class Rewcore {
     }
   }
 
+  /// RMS level of a captured buffer in dBFS (full-scale sine = -3.01 dBFS).
+  double rmsDbfs(Float64List samples) {
+    if (samples.isEmpty) return -240;
+    final buf = calloc<ffi.Double>(samples.length);
+    try {
+      buf.asTypedList(samples.length).setAll(0, samples);
+      return _b.rewRmsDbfs(buf, samples.length);
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
+  /// One loopable block of pink noise, optionally band-limited. Used as the
+  /// centring signal for manual time alignment.
+  Float64List generateNoise({
+    double fs = 48000,
+    double durationSec = 2,
+    double fLo = 0,
+    double fHi = 0,
+    double amplitude = 0.3,
+    int seed = 1,
+  }) {
+    final needed = _b.rewGenerateNoise(
+        fs, durationSec, fLo, fHi, amplitude, seed, ffi.nullptr, 0);
+    final out = calloc<ffi.Double>(needed);
+    try {
+      final n = _b.rewGenerateNoise(
+          fs, durationSec, fLo, fHi, amplitude, seed, out, needed);
+      return Float64List.fromList(out.asTypedList(n));
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   /// Deconvolve a recording against the emitted sweep and return a smoothed,
   /// log-gridded magnitude response. If [calibration] is supplied, the UMIK-1 cal
   /// curve is applied so the result reflects the speakers/room, not the mic.
@@ -50,11 +85,15 @@ class Rewcore {
     double smoothFrac = 24,
     int points = 96,
     MicCalibration? calibration,
+    // Removing the flight time is what makes phase readable at all: over
+    // Bluetooth the path delay alone is thousands of degrees at 1 kHz.
+    bool timeReferencePhase = true,
   }) {
     final em = calloc<ffi.Double>(emitted.length);
     final rec = calloc<ffi.Double>(recorded.length);
     final freqOut = calloc<ffi.Double>(points);
     final magOut = calloc<ffi.Double>(points);
+    final phaseOut = calloc<ffi.Double>(points);
 
     // Optional mic calibration. A direct null-check inside the `if` promotes `cal`
     // to non-null without needing `!`, and works across SDK versions.
@@ -74,16 +113,19 @@ class Rewcore {
       rec.asTypedList(recorded.length).setAll(0, recorded);
       final n = _b.rewMeasureFr(
           em, emitted.length, rec, recorded.length, fs, fMin, fMax, smoothFrac,
-          points, calFreq, calGain, calN, freqOut, magOut, points);
+          points, calFreq, calGain, calN, timeReferencePhase ? 1 : 0,
+          freqOut, magOut, phaseOut, points);
       return FreqResponse(
         List<double>.from(freqOut.asTypedList(n)),
         List<double>.from(magOut.asTypedList(n)),
+        List<double>.from(phaseOut.asTypedList(n)),
       );
     } finally {
       calloc.free(em);
       calloc.free(rec);
       calloc.free(freqOut);
       calloc.free(magOut);
+      calloc.free(phaseOut);
       if (calN > 0) {
         calloc.free(calFreq);
         calloc.free(calGain);
@@ -122,6 +164,9 @@ class Rewcore {
     double fMin = 20,
     double fMax = 20000,
     int maxBands = 10,
+    /// Where the flat target sits in the usable band's level distribution.
+    /// Lower cuts peaks harder (flatter, quieter); higher corrects gently.
+    double targetPercentile = 0.25,
   }) {
     final n = measured.length;
     final freq = calloc<ffi.Double>(n);
@@ -134,7 +179,8 @@ class Rewcore {
       freq.asTypedList(n).setAll(0, measured.freqHz);
       mag.asTypedList(n).setAll(0, measured.magDb);
       final count = _b.rewFitPeqFlat(
-          freq, mag, n, fs, fMin, fMax, maxBands, fOut, gOut, qOut, errOut);
+          freq, mag, n, fs, fMin, fMax, maxBands, targetPercentile,
+          fOut, gOut, qOut, errOut);
       final bands = <PeqBand>[];
       for (var i = 0; i < count; i++) {
         bands.add(PeqBand(freqHz: fOut[i], gainDb: gOut[i], q: qOut[i]));

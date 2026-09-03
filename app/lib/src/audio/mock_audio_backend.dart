@@ -3,6 +3,7 @@
 // biquads) plus a little latency and noise. This lets the entire app flow —
 // measure, auto-EQ, verify — be exercised end-to-end with no mic or vehicle, and
 // produces a realistically bumpy response for the EQ to correct.
+import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -46,6 +47,43 @@ class MockAudioBackend implements AudioBackend {
   MockAudioBackend({this.seed = 1});
   final int seed;
 
+  // A plausible wandering level so the meter can be exercised with no hardware.
+  StreamController<MicLevel>? _levelCtl;
+  Timer? _levelTimer;
+  bool _tonePlaying = false;
+
+  @override
+  Stream<MicLevel> get inputLevels =>
+      (_levelCtl ??= StreamController<MicLevel>.broadcast()).stream;
+
+  @override
+  Future<void> startInputLevel() async {
+    final ctl = _levelCtl ??= StreamController<MicLevel>.broadcast();
+    final rnd = Random(seed);
+    _levelTimer?.cancel();
+    _levelTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      final rms = -46 + rnd.nextDouble() * 10 + (_tonePlaying ? 20 : 0);
+      ctl.add(MicLevel(rmsDb: rms, peakDb: rms + 6));
+    });
+  }
+
+  @override
+  Future<void> stopInputLevel() async {
+    _levelTimer?.cancel();
+    _levelTimer = null;
+  }
+
+  @override
+  Future<void> startTone(
+      {required Float64List samples, required double fs}) async {
+    _tonePlaying = true;
+  }
+
+  @override
+  Future<void> stopTone() async {
+    _tonePlaying = false;
+  }
+
   @override
   Future<MicInfo> micStatus() async =>
       const MicInfo(connected: true, name: 'UMIK-1 (mock)');
@@ -78,5 +116,9 @@ class MockAudioBackend implements AudioBackend {
   }
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async {
+    _levelTimer?.cancel();
+    await _levelCtl?.close();
+    _levelCtl = null;
+  }
 }

@@ -35,6 +35,34 @@ Biquad makePeaking(double f0, double fs, double gainDb, double q) {
   return bq;
 }
 
+Biquad makeLowPass(double f0, double fs, double q) {
+  const double w0 = 2.0 * M_PI * f0 / fs;
+  const double cw = std::cos(w0);
+  const double alpha = std::sin(w0) / (2.0 * q);
+  const double a0 = 1.0 + alpha;
+  Biquad bq;
+  bq.b0 = ((1.0 - cw) / 2.0) / a0;
+  bq.b1 = (1.0 - cw) / a0;
+  bq.b2 = ((1.0 - cw) / 2.0) / a0;
+  bq.a1 = (-2.0 * cw) / a0;
+  bq.a2 = (1.0 - alpha) / a0;
+  return bq;
+}
+
+Biquad makeHighPass(double f0, double fs, double q) {
+  const double w0 = 2.0 * M_PI * f0 / fs;
+  const double cw = std::cos(w0);
+  const double alpha = std::sin(w0) / (2.0 * q);
+  const double a0 = 1.0 + alpha;
+  Biquad bq;
+  bq.b0 = ((1.0 + cw) / 2.0) / a0;
+  bq.b1 = -(1.0 + cw) / a0;
+  bq.b2 = ((1.0 + cw) / 2.0) / a0;
+  bq.a1 = (-2.0 * cw) / a0;
+  bq.a2 = (1.0 - alpha) / a0;
+  return bq;
+}
+
 Biquad makeLowShelf(double f0, double fs, double gainDb, double q) {
   const double A = std::pow(10.0, gainDb / 40.0);
   const double w0 = 2.0 * M_PI * f0 / fs;

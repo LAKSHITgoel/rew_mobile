@@ -1,14 +1,17 @@
 // Unit tests for the app's pure-Dart logic (no FFI / no platform channels).
 // Run with `flutter test` on a machine with the Flutter SDK.
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rew_mobile/src/models/car_setup.dart';
 import 'package:rew_mobile/src/models/measurement.dart';
 import 'package:rew_mobile/src/models/mic_calibration.dart';
 import 'package:rew_mobile/src/models/project.dart';
 import 'package:rew_mobile/src/services/crossover_calc.dart';
 import 'package:rew_mobile/src/services/dsp_math.dart';
 import 'package:rew_mobile/src/services/project_store.dart';
+import 'package:rew_mobile/src/services/time_align.dart';
 
 void main() {
   group('crossover_calc', () {
@@ -46,8 +49,12 @@ void main() {
             evalHz: f, f0: 1000, fs: 48000, gainDb: 8, q: 2));
       }
       final measured = FreqResponse(freq, mag);
+      // levelMatch off: this test is about the correction cancelling the bump,
+      // not about how the curve is presented.
       final corrected = applyEqPreview(
-          measured, const [PeqBand(freqHz: 1000, gainDb: -8, q: 2)], 48000);
+              measured, const [PeqBand(freqHz: 1000, gainDb: -8, q: 2)], 48000,
+              levelMatch: false)
+          .predicted;
       // Find the point nearest 1 kHz and check it's ~flat after correction.
       var best = 0;
       for (var i = 1; i < freq.length; i++) {
@@ -66,10 +73,130 @@ void main() {
       expect(cal.gainDb.last, closeTo(-2.0, 1e-9));
     });
 
+    test('parses the real miniDSP quoted header', () {
+      // Real UMIK-1 files start with a quoted header, not a comment marker.
+      final cal = MicCalibration.parse(
+          '"Sens Factor =-0.989dB, SERNO: 7165152"\n'
+          '10.054\t-4.3217\n'
+          '1000.000\t0.0000\n');
+      expect(cal.freqHz.length, 2);
+      expect(cal.sensitivityDbFs, closeTo(-0.989, 1e-9));
+      expect(cal.gainDb.first, closeTo(-4.3217, 1e-9));
+    });
+
     test('handles comma separators and comments', () {
       final cal = MicCalibration.parse('# header\n20,0.5\n1000,1.0\n');
       expect(cal.freqHz, [20, 1000]);
       expect(cal.gainDb, [0.5, 1.0]);
+    });
+  });
+
+  group('CarSetup', () {
+    test('active front exposes each driver, passive collapses to one', () {
+      const active = CarSetup(
+          front: FrontConfig.twoWayActive,
+          rear: RearConfig.none,
+          sub: SubConfig.none);
+      expect(active.channels.map((c) => c.id),
+          containsAll(['fl_tweeter', 'fl_mid', 'fr_tweeter', 'fr_mid']));
+
+      const passive = CarSetup(
+          front: FrontConfig.twoWayPassive,
+          rear: RearConfig.none,
+          sub: SubConfig.none);
+      // One controllable channel per side, not two.
+      expect(passive.channels.length, 2);
+      expect(passive.channels.map((c) => c.id), ['fl', 'fr']);
+    });
+
+    test('3-way active adds a midbass per side', () {
+      const s = CarSetup(
+          front: FrontConfig.threeWayActive,
+          rear: RearConfig.none,
+          sub: SubConfig.none);
+      expect(s.channels.length, 6);
+      expect(s.channels.where((c) => c.role == DriverRole.midbass).length, 2);
+    });
+
+    test('rear and sub options change the channel list', () {
+      expect(
+          const CarSetup(rear: RearConfig.none, sub: SubConfig.none)
+              .channels
+              .any((c) => c.id.startsWith('r')),
+          isFalse);
+      expect(
+          const CarSetup(sub: SubConfig.stereo)
+              .channels
+              .where((c) => c.role == DriverRole.sub)
+              .length,
+          2);
+    });
+
+    test('a tweeter never gets a full-range sweep', () {
+      const tweeter = Channel('t', 'T', DriverRole.tweeter);
+      const sub = Channel('s', 'S', DriverRole.sub);
+      expect(CarSetup.bandFor(tweeter).fLo, greaterThanOrEqualTo(2000));
+      expect(CarSetup.bandFor(tweeter).isFullRange, isFalse);
+      expect(CarSetup.bandFor(sub).fHi, lessThanOrEqualTo(200));
+    });
+
+    test('plan explains the passive limitation', () {
+      final notes =
+          const CarSetup(front: FrontConfig.twoWayPassive).planNotes.join(' ');
+      expect(notes.toLowerCase(), contains('passive'));
+    });
+
+    test('round-trips through JSON', () {
+      const s = CarSetup(
+          front: FrontConfig.threeWayActive,
+          rear: RearConfig.twoWayActive,
+          sub: SubConfig.stereo);
+      final back = CarSetup.fromJson(s.toJson());
+      expect(back.front, s.front);
+      expect(back.rear, s.rear);
+      expect(back.sub, s.sub);
+    });
+  });
+
+  group('time alignment', () {
+    test('speed of sound tracks temperature', () {
+      expect(speedOfSound(celsius: 20), closeTo(343.4, 0.1));
+      expect(speedOfSound(celsius: 0), closeTo(331.3, 0.1));
+      expect(speedOfSound(celsius: 35), greaterThan(speedOfSound(celsius: 15)));
+    });
+
+    test('farthest driver is the reference and gets no delay', () {
+      final d = delaysFromDistancesCm({'near': 100, 'far': 200});
+      expect(d['far'], 0.0);
+      // 1 m of extra path at ~343.4 m/s is ~2.91 ms.
+      expect(d['near'], closeTo(2.912, 0.01));
+    });
+
+    test('delays are clamped to what the DSP accepts', () {
+      final d = delaysFromDistancesCm({'a': 1, 'b': 100000}, maxDelayMs: 20);
+      expect(d['a'], 20.0);
+    });
+
+    test('ignores missing or nonsensical distances', () {
+      final d = delaysFromDistancesCm({'a': 0, 'b': -5, 'c': 150});
+      expect(d.keys, ['c']);
+      expect(d['c'], 0.0);
+    });
+  });
+
+  group('SweepBand', () {
+    test('presets cover the drivers and are ordered low->high', () {
+      expect(SweepBand.presets, contains(SweepBand.tweeter));
+      expect(SweepBand.sub.fHi, lessThan(SweepBand.tweeter.fLo));
+      for (final b in SweepBand.presets) {
+        expect(b.fLo, lessThan(b.fHi));
+      }
+    });
+
+    test('only the full-range band trips the tweeter warning', () {
+      expect(SweepBand.full.isFullRange, isTrue);
+      expect(SweepBand.tweeter.isFullRange, isFalse); // starts at 2 kHz
+      expect(SweepBand.sub.isFullRange, isFalse);     // stops at 200 Hz
     });
   });
 
@@ -102,6 +229,45 @@ void main() {
       expect(back.eqBands['system']!.first.freqHz, 80);
       expect(back.crossovers.first.highPassHz, 2500);
       expect(back.crossovers.first.slope, XoverSlope.linkwitzRiley24);
+    });
+  });
+
+  group('FileProjectStore', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('rew_store'));
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    test('a saved tune survives a brand-new store (i.e. an app restart)', () async {
+      final project = TuneProject(
+        id: 'car1',
+        name: 'My car',
+        createdAt: DateTime(2026, 9, 2),
+        eqBands: {
+          'system': const [PeqBand(freqHz: 64, gainDb: -7.7, q: 1.02)]
+        },
+        delaysMs: {'fl_tweeter': 1.25},
+        levelsDbfs: {'fl_tweeter': -12.5},
+      )..splOffsetDb = 110.0;
+      await FileProjectStore(tmp).save(project);
+
+      // A different instance, as happens on a cold start.
+      final reopened = await FileProjectStore(tmp).list();
+      expect(reopened.length, 1);
+      final p = reopened.single;
+      expect(p.name, 'My car');
+      expect(p.eqBands['system']!.single.freqHz, 64);
+      expect(p.delaysMs['fl_tweeter'], 1.25);
+      expect(p.levelsDbfs['fl_tweeter'], -12.5);
+      expect(p.splOffsetDb, 110.0);
+      expect(p.setup.front, FrontConfig.twoWayActive);
+    });
+
+    test('delete removes it', () async {
+      final store = FileProjectStore(tmp);
+      await store.save(
+          TuneProject(id: 'x', name: 'X', createdAt: DateTime(2026, 1, 1)));
+      await store.delete('x');
+      expect(await store.list(), isEmpty);
     });
   });
 
