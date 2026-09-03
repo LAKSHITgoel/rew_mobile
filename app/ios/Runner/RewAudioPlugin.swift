@@ -141,9 +141,16 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
 
     // MARK: - Mic
 
-    /// The UMIK-1 arrives as a USB audio input (via the Lightning / USB-C camera
-    /// adapter). Reported by name so the app can say which mic it found.
+    /// The UMIK-1 arrives as a USB audio input — straight into the USB-C port on
+    /// an iPhone 15 or later, or through a camera adapter on a Lightning phone.
+    /// Reported by name so the app can say which mic it found.
     private func micStatus() -> [String: Any] {
+        // Without record permission the mic is simply missing from
+        // availableInputs, so a plugged-in UMIK-1 would be reported as absent.
+        // Ask first, and say so plainly if the answer is no.
+        guard ensureRecordPermission() else {
+            return ["connected": false, "name": "Microphone access denied"]
+        }
         let session = AVAudioSession.sharedInstance()
         // availableInputs is only populated once the session knows it may record.
         try? session.setCategory(.playAndRecord, mode: .measurement,
@@ -154,12 +161,50 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
         return info
     }
 
+    /// Blocks the calling (background) queue until the user has answered the
+    /// microphone prompt. iOS 17 moved this from AVAudioSession to
+    /// AVAudioApplication; the project still deploys to iOS 15, so both paths
+    /// stay.
+    private func ensureRecordPermission() -> Bool {
+        if #available(iOS 17.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted: return true
+            case .denied: return false
+            default: break
+            }
+            var granted = false
+            let sem = DispatchSemaphore(value: 0)
+            AVAudioApplication.requestRecordPermission { ok in
+                granted = ok
+                sem.signal()
+            }
+            sem.wait()
+            return granted
+        } else {
+            let session = AVAudioSession.sharedInstance()
+            switch session.recordPermission {
+            case .granted: return true
+            case .denied: return false
+            default: break
+            }
+            var granted = false
+            let sem = DispatchSemaphore(value: 0)
+            session.requestRecordPermission { ok in
+                granted = ok
+                sem.signal()
+            }
+            sem.wait()
+            return granted
+        }
+    }
+
     // MARK: - Capture
 
     private enum CaptureError: LocalizedError {
         case sampleRate(want: Double, got: Double)
         case noAudio(got: Int, want: Int)
         case timedOut
+        case noPermission
 
         var errorDescription: String? {
             switch self {
@@ -173,6 +218,9 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
             case .timedOut:
                 return "The microphone did not return any audio in time. Check it "
                     + "is still plugged in, then try again."
+            case .noPermission:
+                return "This app is not allowed to use the microphone. Turn it on "
+                    + "in Settings > Privacy & Security > Microphone."
             }
         }
     }
@@ -182,6 +230,7 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     /// the wireless latency as leading silence plus the room's decay tail, and
     /// the deconvolution in core/ finds the alignment itself.
     private func playAndCapture(sweep: [Double], fs: Double) throws -> [Double] {
+        guard ensureRecordPermission() else { throw CaptureError.noPermission }
         stopInputLevel()   // only one tap may be installed on the input bus
         stopTone()
 
@@ -287,6 +336,7 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     /// actually hearing, and can match channel levels before measuring.
     private func startInputLevel() throws {
         if levelTapped { return }
+        guard ensureRecordPermission() else { throw CaptureError.noPermission }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .measurement,
                                 options: [.allowBluetoothA2DP])
