@@ -33,7 +33,25 @@ class WizardController extends ChangeNotifier {
     required this.service,
     required this.store,
     required this.project,
-  });
+  }) {
+    // Reopening a saved tune used to show the EQ table but no graph: the
+    // measurement was on disk and simply never put back on screen, so the tune
+    // looked half-lost. Restore what was saved.
+    final saved = project.measured['system'];
+    if (saved != null && !saved.isEmpty) {
+      lastMeasurement = saved;
+      lastMeasurementFull = Measurement(
+        response: saved,
+        levelDbfs: project.levelsDbfs['system'] ?? 0,
+      );
+    }
+    final bands = project.eqBands['system'];
+    if (bands != null && bands.isNotEmpty) {
+      // Error figures are not saved; they describe the fit that produced these
+      // bands, and re-deriving them here would be a guess.
+      lastEq = EqResult(bands: bands, initialErrorDb: 0, finalErrorDb: 0);
+    }
+  }
 
   final MeasurementService service;
   final ProjectStore store;
