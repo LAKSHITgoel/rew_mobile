@@ -16,6 +16,16 @@ import '../ffi/rewcore.dart';
 import '../models/measurement.dart';
 import '../models/mic_calibration.dart';
 
+/// Raised when a capture is not fit to be measured. Carries the assessment so
+/// the UI can say exactly what went wrong and what to change.
+class BadCaptureException implements Exception {
+  BadCaptureException(this.quality);
+  final CaptureQuality quality;
+
+  @override
+  String toString() => quality.problem ?? 'The recording could not be used.';
+}
+
 class MeasurementConfig {
   const MeasurementConfig({
     this.fs = 48000,
@@ -227,6 +237,16 @@ class MeasurementService {
 
     return Isolate.run(() {
       final core = Rewcore.open(libraryPath: lib);
+
+      // Check the capture before inferring anything from it. A clipped, silent
+      // or near-empty recording produces a confident-looking curve and
+      // completely wrong advice, and none of that is visible on the plot
+      // afterwards.
+      final quality = core.assessCapture(recorded, fs);
+      if (!quality.usable) {
+        throw BadCaptureException(quality);
+      }
+
       final level = core.rmsDbfs(recorded);
       final curves = core.measureCurves(
         emitted: stimulus,
@@ -242,7 +262,8 @@ class MeasurementService {
           response: curves.display,
           analysis: curves.analysis,
           levelDbfs: level,
-          noiseFloor: noiseFloor);
+          noiseFloor: noiseFloor,
+          quality: quality);
     });
   }
 

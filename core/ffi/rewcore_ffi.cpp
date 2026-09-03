@@ -101,6 +101,23 @@ size_t rew_measure_fr(const rew_measure_request* req) {
   return display.freqHz.size();
 }
 
+int rew_assess_capture(const double* samples, size_t n, double fs, double* out) {
+  if (!samples || n == 0 || !out) return 0;
+  const CaptureQuality q =
+      assessCapture(std::vector<double>(samples, samples + n), fs);
+  int flags = 0;
+  if (q.clipped) flags |= 1;
+  if (q.tooQuiet) flags |= 2;
+  if (q.mostlySilent) flags |= 4;
+  out[0] = q.peak;
+  out[1] = q.rmsDbfs;
+  out[2] = q.clippedFraction;
+  out[3] = q.silentFraction;
+  out[4] = static_cast<double>(flags);
+  out[5] = q.usable ? 1.0 : 0.0;
+  return flags;
+}
+
 size_t rew_response_spread(const double* mags, size_t count, size_t n,
                            double* out) {
   if (!mags || !out || count == 0 || n == 0) return 0;

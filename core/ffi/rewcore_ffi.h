@@ -41,6 +41,12 @@ REW_EXPORT double rew_rms_dbfs(const double* samples, size_t n);
 REW_EXPORT size_t rew_response_spread(const double* mags, size_t count, size_t n,
                                       double* out);
 
+// Check a raw capture before anything is inferred from it. `out` receives six
+// doubles: peak, rmsDbfs, clippedFraction, silentFraction, flags, usable.
+// `flags` is a bitmask: 1 clipped, 2 too quiet, 4 mostly silent.
+REW_EXPORT int rew_assess_capture(const double* samples, size_t n, double fs,
+                                  double* out);
+
 // Generate one loopable block of pink noise, optionally band-limited to
 // [fLo, fHi] (pass 0 for either to skip that side). Used for judging the centre
 // image by ear during manual time alignment. Call with out=NULL to query length.

@@ -502,6 +502,56 @@ static void testConfidenceAndRepeatability() {
   CHECK(b.rationale[0].confidence < 0.7);
 }
 
+static void testCaptureQuality() {
+  std::printf("test: a bad capture is caught before it becomes advice\n");
+  const double fs = 48000.0;
+  const std::size_t n = static_cast<std::size_t>(fs);  // one second
+
+  // A healthy sweep-like capture.
+  std::vector<double> good(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    good[i] = 0.3 * std::sin(2.0 * M_PI * 1000.0 * i / fs);
+  }
+  CaptureQuality q = assessCapture(good, fs);
+  CHECK(q.usable);
+  CHECK(!q.clipped && !q.tooQuiet && !q.mostlySilent);
+
+  // A clean sine peaking at exactly full scale is hot, but it is NOT clipped:
+  // roughly 3% of its samples sit above 0.999 simply because that is what a
+  // sine does near its peak. Counting those flagged every healthy capture.
+  std::vector<double> fullScale(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    fullScale[i] = std::sin(2.0 * M_PI * 1000.0 * i / fs);
+  }
+  q = assessCapture(fullScale, fs);
+  CHECK(!q.clipped);
+  CHECK(q.usable);
+
+  // Clipped: the input gain is wrong and every level in the result is a lie.
+  std::vector<double> clipped(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    clipped[i] = std::clamp(2.0 * std::sin(2.0 * M_PI * 1000.0 * i / fs), -1.0, 1.0);
+  }
+  q = assessCapture(clipped, fs);
+  CHECK(q.clipped);
+  CHECK(!q.usable);
+
+  // Nothing arrived: mic unplugged, or the sweep never played.
+  q = assessCapture(std::vector<double>(n, 0.0), fs);
+  CHECK(q.tooQuiet || q.mostlySilent);
+  CHECK(!q.usable);
+
+  // Mostly silence with a short burst: the channel under test was not the one
+  // playing, which on a multi-driver system is an easy mistake to make.
+  std::vector<double> wrongChannel(n, 0.0);
+  for (std::size_t i = 0; i < n / 10; ++i) {
+    wrongChannel[i] = 0.3 * std::sin(2.0 * M_PI * 1000.0 * i / fs);
+  }
+  q = assessCapture(wrongChannel, fs);
+  CHECK(q.mostlySilent);
+  CHECK(!q.usable);
+}
+
 static void testResponseSpread() {
   std::printf("test: repeatability across repeated captures\n");
   FreqResponse a, b, cc;
@@ -991,6 +1041,7 @@ int main() {
   testTargetCurves();
   testConfidenceAndRepeatability();
   testResponseSpread();
+  testCaptureQuality();
   testPhaseUnwrap();
   testPhaseOfPureDelay();
   testTimeReferencedPhase();

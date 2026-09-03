@@ -299,6 +299,57 @@ FreqResponse resampleLog(const FreqResponse& fr, double fMin, double fMax,
   return out;
 }
 
+CaptureQuality assessCapture(const std::vector<double>& x, double fs) {
+  CaptureQuality q;
+  if (x.empty() || fs <= 0.0) return q;
+
+  // Clipping is a FLAT TOP, not merely touching full scale. A clean sine peaking
+  // at exactly 0 dBFS has ~3% of its samples above 0.999 and is not clipped at
+  // all — counting those flagged every healthy full-scale capture. What actually
+  // identifies a converter that ran out of range is consecutive samples pinned
+  // at the same extreme.
+  std::size_t clipped = 0;
+  std::size_t run = 0;
+  for (double v : x) {
+    const double a = std::fabs(v);
+    if (a > q.peak) q.peak = a;
+    if (a >= 0.9995) {
+      ++run;
+      // Count the whole plateau once it is long enough to be flat rather than
+      // the tip of a waveform passing through.
+      if (run >= 3) ++clipped;
+    } else {
+      run = 0;
+    }
+  }
+  q.clippedFraction = static_cast<double>(clipped) / x.size();
+  q.rmsDbfs = rmsDbfs(x);
+
+  // Short-term level over ~20 ms blocks, to find how much of the capture is
+  // essentially nothing.
+  const std::size_t block = std::max<std::size_t>(1, static_cast<std::size_t>(fs * 0.02));
+  std::size_t blocks = 0, quiet = 0;
+  for (std::size_t i = 0; i + block <= x.size(); i += block) {
+    double sum = 0.0;
+    for (std::size_t j = i; j < i + block; ++j) sum += x[j] * x[j];
+    const double rms = std::sqrt(sum / block);
+    ++blocks;
+    if (rms < 1e-4) ++quiet;  // about -80 dBFS
+  }
+  q.silentFraction = blocks ? static_cast<double>(quiet) / blocks : 1.0;
+
+  // A handful of clipped samples is a transient; a sustained fraction means the
+  // input gain is wrong and every level in the result is a lie.
+  q.clipped = q.clippedFraction > 0.001;
+  // Below this the sweep is buried and the deconvolution is mostly noise.
+  q.tooQuiet = q.rmsDbfs < -60.0;
+  // A sweep occupies its whole capture apart from the flight-time gap and the
+  // tail; if most of it is silence, the channel under test was not playing.
+  q.mostlySilent = q.silentFraction > 0.6;
+  q.usable = !q.clipped && !q.tooQuiet && !q.mostlySilent;
+  return q;
+}
+
 FreqResponse responseSpread(const std::vector<FreqResponse>& measurements) {
   FreqResponse out;
   if (measurements.empty()) return out;

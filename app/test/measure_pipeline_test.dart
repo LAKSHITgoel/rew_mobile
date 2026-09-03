@@ -385,6 +385,40 @@ void main() {
     expect(rec.highPass.reason, CrossoverReason.stillStrongAtLimit);
     expect(rec.highPass.reason.explanation, contains('sweep'));
   });
+
+  test('a clipped capture is refused, not measured', () async {
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      _ClippedBackend(),
+      libraryPath: lib,
+      captureTimeout: const Duration(seconds: 30),
+    );
+    await expectLater(svc.measureOnce(band: SweepBand.full),
+        throwsA(isA<BadCaptureException>()));
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a silent capture is refused, and says what to check', () async {
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      _SilentBackend(),
+      libraryPath: lib,
+      captureTimeout: const Duration(seconds: 30),
+    );
+    try {
+      await svc.measureOnce(band: SweepBand.full);
+      fail('a silent capture must not produce a measurement');
+    } on BadCaptureException catch (e) {
+      expect(e.quality.usable, isFalse);
+      expect(e.toString(), isNotEmpty);
+    }
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a good capture is reported as usable', () async {
+    final m = await service.measureOnce(band: SweepBand.full);
+    expect(m.quality, isNotNull);
+    expect(m.quality!.usable, isTrue);
+    expect(m.quality!.problem, isNull);
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.
@@ -407,3 +441,25 @@ class _FlakyBackend extends MockAudioBackend {
     return super.playSweepAndCapture(sweep: sweep, fs: fs);
   }
 }
+
+/// Returns a capture that slammed into full scale.
+class _ClippedBackend extends MockAudioBackend {
+  @override
+  Future<Float64List> playSweepAndCapture(
+      {required Float64List sweep, required double fs}) async {
+    final rec = await super.playSweepAndCapture(sweep: sweep, fs: fs);
+    for (var i = 0; i < rec.length; i++) {
+      rec[i] = (rec[i] * 50).clamp(-1.0, 1.0);
+    }
+    return rec;
+  }
+}
+
+/// Returns silence, as an unplugged mic or a muted channel would.
+class _SilentBackend extends MockAudioBackend {
+  @override
+  Future<Float64List> playSweepAndCapture(
+          {required Float64List sweep, required double fs}) async =>
+      Float64List(sweep.length);
+}
+

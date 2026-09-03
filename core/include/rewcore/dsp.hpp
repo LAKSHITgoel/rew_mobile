@@ -44,6 +44,29 @@ std::vector<double> generatePinkNoise(const NoiseSpec& spec);
 // same convention miniDSP use for the UMIK-1 sensitivity figure.
 double rmsDbfs(const std::vector<double>& x);
 
+// What a capture looks like before anyone tries to interpret it.
+//
+// A bad measurement must never reach a recommendation, and the failures that
+// matter in a car are not subtle: the input clipped, nothing arrived at all, or
+// the recording is mostly silence because the wrong channel was playing. Each
+// is cheap to detect and impossible to spot on a smoothed magnitude plot after
+// the fact.
+struct CaptureQuality {
+  double peak = 0.0;          // absolute peak, 0..1+
+  double rmsDbfs = -240.0;
+  double clippedFraction = 0.0;  // samples at or beyond full scale
+  // Fraction of the capture whose short-term level sits near the noise floor.
+  // A sweep should be audible for most of its length; a mostly-dead recording
+  // means the channel under test was not the one playing.
+  double silentFraction = 0.0;
+  bool clipped = false;
+  bool tooQuiet = false;
+  bool mostlySilent = false;
+  bool usable = false;
+};
+
+CaptureQuality assessCapture(const std::vector<double>& x, double fs);
+
 // Convert a measured dBFS level to dB SPL given a calibration offset.
 //
 // The offset cannot be derived from the mic's sensitivity alone on a phone: the

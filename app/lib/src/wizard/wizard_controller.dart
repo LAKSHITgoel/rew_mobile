@@ -448,8 +448,10 @@ class WizardController extends ChangeNotifier {
       // Surface it. A measurement that fails silently is indistinguishable from
       // a dead button — which is exactly how this presented in the car.
       debugPrint('[rew] $msg failed: $e\n$st');
+      // A rejected capture is not a crash: it is the app doing its job, so it
+      // is reported as the instruction it is rather than as "Error: ...".
       lastError = '$e';
-      status = 'Error: $e';
+      status = e is BadCaptureException ? '$e' : 'Error: $e';
     } finally {
       busy = false;
       notifyListeners();

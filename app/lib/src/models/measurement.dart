@@ -29,6 +29,51 @@ class FreqResponse {
       );
 }
 
+/// What a capture looked like before anything was inferred from it.
+class CaptureQuality {
+  const CaptureQuality({
+    required this.peak,
+    required this.rmsDbfs,
+    required this.clippedFraction,
+    required this.silentFraction,
+    required this.clipped,
+    required this.tooQuiet,
+    required this.mostlySilent,
+  });
+
+  final double peak;
+  final double rmsDbfs;
+  final double clippedFraction;
+  final double silentFraction;
+  final bool clipped;
+  final bool tooQuiet;
+  final bool mostlySilent;
+
+  bool get usable => !clipped && !tooQuiet && !mostlySilent;
+
+  /// What went wrong and what to do about it. A bad measurement must never
+  /// become a recommendation, so this is phrased as an instruction.
+  String? get problem {
+    if (clipped) {
+      return 'The recording clipped (${(clippedFraction * 100).toStringAsFixed(1)}% '
+          'of it hit full scale). Every level in the result would be wrong. '
+          'Turn the system volume down and measure again.';
+    }
+    if (tooQuiet) {
+      return 'The recording came back at ${rmsDbfs.toStringAsFixed(1)} dBFS — '
+          'far too quiet to measure anything. Check the mic is plugged in and '
+          'the sweep is actually playing through the car, then turn the volume up.';
+    }
+    if (mostlySilent) {
+      return '${(silentFraction * 100).round()}% of the recording is silence, so '
+          'the sweep mostly did not arrive. Usually this means a different '
+          'channel was playing than the one being measured, or the audio '
+          'dropped out mid-sweep.';
+    }
+    return null;
+  }
+}
+
 /// The two curves a measurement produces: one to look at, one to fit against.
 class MeasuredCurves {
   const MeasuredCurves({required this.display, required this.analysis});
@@ -53,8 +98,13 @@ class Measurement {
     required this.levelDbfs,
     this.noiseFloor,
     this.spreadDb = const [],
+    this.quality,
     FreqResponse? analysis,
   }) : _analysis = analysis;
+
+  /// What the raw capture looked like. Null for measurements made before this
+  /// was checked.
+  final CaptureQuality? quality;
 
   final FreqResponse? _analysis;
 

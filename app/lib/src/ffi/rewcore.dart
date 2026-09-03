@@ -243,6 +243,38 @@ class Rewcore {
       _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>() &&
       _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>();
 
+  /// Check a raw capture before anything is inferred from it.
+  CaptureQuality assessCapture(Float64List samples, double fs) {
+    if (samples.isEmpty) {
+      return const CaptureQuality(
+          peak: 0,
+          rmsDbfs: -240,
+          clippedFraction: 0,
+          silentFraction: 1,
+          clipped: false,
+          tooQuiet: true,
+          mostlySilent: true);
+    }
+    final buf = calloc<ffi.Double>(samples.length);
+    final out = calloc<ffi.Double>(6);
+    try {
+      buf.asTypedList(samples.length).setAll(0, samples);
+      final flags = _b.rewAssessCapture(buf, samples.length, fs, out);
+      return CaptureQuality(
+        peak: out[0],
+        rmsDbfs: out[1],
+        clippedFraction: out[2],
+        silentFraction: out[3],
+        clipped: (flags & 1) != 0,
+        tooQuiet: (flags & 2) != 0,
+        mostlySilent: (flags & 4) != 0,
+      );
+    } finally {
+      calloc.free(buf);
+      calloc.free(out);
+    }
+  }
+
   /// Per-point standard deviation across repeated captures, in dB.
   ///
   /// Averaging captures together and keeping only the mean throws away the most

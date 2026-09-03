@@ -101,6 +101,23 @@ class MockAudioBackend implements AudioBackend {
     y = _Biquad.peaking(2800, fs, -6, 2.0).apply(y);
     y = _Biquad.peaking(9000, fs, -4, 0.8).apply(y);
 
+    // Scale to a plausible recording level. The bass hump above adds ~8 dB, so
+    // a full-scale sweep comes out well past full scale — no converter returns
+    // that, and it made every mock capture look clipped to the validity check.
+    // Deconvolution recovers the transfer function regardless of level, so
+    // scaling changes nothing the tests care about.
+    var peak = 0.0;
+    for (final v in y) {
+      final a = v.abs();
+      if (a > peak) peak = a;
+    }
+    if (peak > 0) {
+      final gain = 0.5 / peak;
+      for (var i = 0; i < y.length; i++) {
+        y[i] *= gain;
+      }
+    }
+
     // Emulate wireless latency (leading silence) + capture tail.
     const latencySamples = 2400; // ~50 ms at 48 kHz
     final rnd = Random(seed);
