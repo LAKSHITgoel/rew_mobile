@@ -58,12 +58,46 @@ REW_EXPORT size_t rew_generate_noise(double fs, double durationSec, double fLo, 
 // `phaseOut` may be NULL; when given it receives the UNWRAPPED phase in degrees.
 // Set `timeReferencePhase` to remove the bulk flight time before computing phase
 // (what you want for display); leave it 0 to measure the delay itself.
-REW_EXPORT size_t rew_measure_fr(const double* emitted, size_t emittedLen,
-                      const double* recorded, size_t recordedLen, double fs,
-                      double fMin, double fMax, double smoothFrac, size_t points,
-                      const double* calFreq, const double* calGain, size_t calN,
-                      int timeReferencePhase, double* freqOut, double* magOut,
-                      double* phaseOut, size_t cap);
+// Measure a frequency response, returning TWO curves on the same grid.
+//
+// The display curve is smoothed however the user likes; the analysis curve is
+// smoothed at a fixed, fine setting and is what the EQ fitter reads. They are
+// separated because the two jobs disagree: heavy smoothing is right for reading
+// tonal balance by eye and wrong for deciding filters, since it hides the shape
+// of what is being corrected.
+//
+// Note the analysis curve is *lightly smoothed*, not raw. Point-sampling a raw
+// FFT onto a few hundred log-spaced bins is not "more honest" — it decimates a
+// dense noisy spectrum and the values that survive are close to arbitrary.
+// Smoothing narrower than the grid spacing is the actual goal.
+typedef struct rew_measure_request {
+  const double* emitted;
+  const double* recorded;
+  const double* calFreq;   // optional mic calibration
+  const double* calGain;   // optional, paired with calFreq
+  size_t emittedLen;
+  size_t recordedLen;
+  size_t calN;
+  size_t points;
+  double fs;
+  double fMin;
+  double fMax;
+  double smoothFrac;          // display smoothing; 0 means none
+  double analysisSmoothFrac;  // fitting smoothing; 0 keeps the built-in default
+  int timeReferencePhase;
+  int reserved_;
+
+  double* freqOut;
+  double* magOut;          // display curve
+  double* magAnalysisOut;  // fitting curve (optional)
+  double* phaseOut;        // optional
+  size_t cap;
+} rew_measure_request;
+
+REW_EXPORT size_t rew_measure_fr(const rew_measure_request* req);
+
+// sizeof(rew_measure_request), so a binding can assert its layout agrees.
+REW_EXPORT size_t rew_measure_request_size(void);
 
 // Fit up to `maxBands` parametric EQ bands to move `measured` toward a flat target.
 // Inputs are parallel freq/mag arrays of length `n`. Writes chosen bands into the

@@ -76,13 +76,20 @@ class Rewcore {
   /// Deconvolve a recording against the emitted sweep and return a smoothed,
   /// log-gridded magnitude response. If [calibration] is supplied, the UMIK-1 cal
   /// curve is applied so the result reflects the speakers/room, not the mic.
-  FreqResponse measureFr({
+  /// A measurement's two curves: what to draw, and what to fit against.
+  ///
+  /// They are separated because the jobs disagree — heavy smoothing is right
+  /// for reading tonal balance and wrong for deciding filters.
+  MeasuredCurves measureCurves({
     required Float64List emitted,
     required Float64List recorded,
     double fs = 48000,
     double fMin = 20,
     double fMax = 20000,
     double smoothFrac = 24,
+
+    /// Smoothing the EQ fitter sees, independent of what is displayed.
+    double analysisSmoothFrac = 24,
     int points = 96,
     MicCalibration? calibration,
     // Removing the flight time is what makes phase readable at all: over
@@ -93,6 +100,7 @@ class Rewcore {
     final rec = calloc<ffi.Double>(recorded.length);
     final freqOut = calloc<ffi.Double>(points);
     final magOut = calloc<ffi.Double>(points);
+    final magAnalysisOut = calloc<ffi.Double>(points);
     final phaseOut = calloc<ffi.Double>(points);
 
     // Optional mic calibration. A direct null-check inside the `if` promotes `cal`
@@ -111,20 +119,50 @@ class Rewcore {
     try {
       em.asTypedList(emitted.length).setAll(0, emitted);
       rec.asTypedList(recorded.length).setAll(0, recorded);
-      final n = _b.rewMeasureFr(
-          em, emitted.length, rec, recorded.length, fs, fMin, fMax, smoothFrac,
-          points, calFreq, calGain, calN, timeReferencePhase ? 1 : 0,
-          freqOut, magOut, phaseOut, points);
-      return FreqResponse(
-        List<double>.from(freqOut.asTypedList(n)),
-        List<double>.from(magOut.asTypedList(n)),
-        List<double>.from(phaseOut.asTypedList(n)),
-      );
+      final req = calloc<RewMeasureRequest>();
+      try {
+        req.ref
+          ..emitted = em
+          ..recorded = rec
+          ..calFreq = calFreq
+          ..calGain = calGain
+          ..emittedLen = emitted.length
+          ..recordedLen = recorded.length
+          ..calN = calN
+          ..points = points
+          ..fs = fs
+          ..fMin = fMin
+          ..fMax = fMax
+          ..smoothFrac = smoothFrac
+          ..analysisSmoothFrac = analysisSmoothFrac
+          ..timeReferencePhase = timeReferencePhase ? 1 : 0
+          ..freqOut = freqOut
+          ..magOut = magOut
+          ..magAnalysisOut = magAnalysisOut
+          ..phaseOut = phaseOut
+          ..cap = points;
+        final n = _b.rewMeasureFr(req);
+        final freq = List<double>.from(freqOut.asTypedList(n));
+        return MeasuredCurves(
+          display: FreqResponse(
+            freq,
+            List<double>.from(magOut.asTypedList(n)),
+            List<double>.from(phaseOut.asTypedList(n)),
+          ),
+          analysis: FreqResponse(
+            freq,
+            List<double>.from(magAnalysisOut.asTypedList(n)),
+          ),
+        );
+      } finally {
+        calloc.free(req);
+      }
     } finally {
       calloc.free(em);
       calloc.free(rec);
       calloc.free(freqOut);
       calloc.free(magOut);
+      calloc.free(magAnalysisOut);
       calloc.free(phaseOut);
       if (calN > 0) {
         calloc.free(calFreq);
@@ -157,14 +195,41 @@ class Rewcore {
     }
   }
 
-  /// Asserts the Dart mirror of `rew_peq_request` agrees with the C struct.
+  /// Backwards-compatible shorthand for callers that only want the display
+  /// curve (the FFI smoke tests, and the crossover path, which measures one
+  /// driver at a time).
+  FreqResponse measureFr({
+    required Float64List emitted,
+    required Float64List recorded,
+    double fs = 48000,
+    double fMin = 20,
+    double fMax = 20000,
+    double smoothFrac = 24,
+    int points = 96,
+    MicCalibration? calibration,
+    bool timeReferencePhase = true,
+  }) =>
+      measureCurves(
+        emitted: emitted,
+        recorded: recorded,
+        fs: fs,
+        fMin: fMin,
+        fMax: fMax,
+        smoothFrac: smoothFrac,
+        points: points,
+        calibration: calibration,
+        timeReferencePhase: timeReferencePhase,
+      ).display;
+
+  /// Asserts the Dart mirrors of the request structs agree with the C ones.
   ///
   /// A struct ABI makes a transposed argument a compile error, but it makes a
   /// mismatched layout silent corruption — the fit would simply read garbage
   /// where it expected a pointer. Checking the size catches the realistic
   /// failure (a field added on one side only) immediately.
   bool peqRequestLayoutMatches() =>
-      _b.rewPeqRequestSize() == ffi.sizeOf<RewPeqRequest>();
+      _b.rewPeqRequestSize() == ffi.sizeOf<RewPeqRequest>() &&
+      _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>();
 
   /// Per-point standard deviation across repeated captures, in dB.
   ///

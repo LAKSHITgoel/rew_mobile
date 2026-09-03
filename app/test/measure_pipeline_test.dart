@@ -279,6 +279,59 @@ void main() {
       expect(p.description, isNotEmpty);
     }
   });
+
+  test('display smoothing does not coarsen what the EQ fitter reads', () async {
+    // Setting the display to 1/3 octave is a reading choice. It must not change
+    // the curve filters are decided from, or the EQ would be fitted to a
+    // picture rather than to the measurement.
+    final coarse = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      MockAudioBackend(),
+      libraryPath: lib,
+      config: const MeasurementConfig(smoothFrac: 3),
+    );
+    final m = await coarse.measureOnce(band: SweepBand.full);
+    expect(m.analysisResponse.length, m.response.length);
+
+    var differs = false;
+    for (var i = 0; i < m.response.length; i++) {
+      if ((m.response.magDb[i] - m.analysisResponse.magDb[i]).abs() > 1e-9) {
+        differs = true;
+        break;
+      }
+    }
+    expect(differs, isTrue,
+        reason: 'the analysis curve is just the display curve again');
+
+    // The invariant that matters: changing the display setting must leave the
+    // curve the fitter reads alone. Same grid on both so they are comparable.
+    final fine = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      MockAudioBackend(),
+      libraryPath: lib,
+      config: const MeasurementConfig(smoothFrac: 24, points: 240),
+    );
+    final broad = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      MockAudioBackend(),
+      libraryPath: lib,
+      config: const MeasurementConfig(smoothFrac: 3, points: 240),
+    );
+    final a = await fine.measureOnce(band: SweepBand.full);
+    final b = await broad.measureOnce(band: SweepBand.full);
+
+    var displayDiffers = false;
+    for (var i = 0; i < a.response.length; i++) {
+      expect(a.analysisResponse.magDb[i],
+          closeTo(b.analysisResponse.magDb[i], 1e-6),
+          reason: 'display smoothing leaked into the analysis curve');
+      if ((a.response.magDb[i] - b.response.magDb[i]).abs() > 0.01) {
+        displayDiffers = true;
+      }
+    }
+    expect(displayDiffers, isTrue,
+        reason: 'the display smoothing setting did nothing');
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.

@@ -29,6 +29,19 @@ class FreqResponse {
       );
 }
 
+/// The two curves a measurement produces: one to look at, one to fit against.
+class MeasuredCurves {
+  const MeasuredCurves({required this.display, required this.analysis});
+
+  /// Smoothed however the user asked. This is what is drawn and exported.
+  final FreqResponse display;
+
+  /// Smoothed at a fixed fine setting, whatever the display is set to. The EQ
+  /// fitter reads this: deciding filters from a heavily smoothed curve hides
+  /// the shape of what is being corrected.
+  final FreqResponse analysis;
+}
+
 /// A capture: its magnitude response plus how loud it actually was.
 ///
 /// The level is what lets you match drivers to each other and confirm you
@@ -40,7 +53,15 @@ class Measurement {
     required this.levelDbfs,
     this.noiseFloor,
     this.spreadDb = const [],
-  });
+    FreqResponse? analysis,
+  }) : _analysis = analysis;
+
+  final FreqResponse? _analysis;
+
+  /// The curve the EQ fitter should read: smoothed at a fixed fine setting
+  /// rather than at whatever the display is set to. Falls back to [response]
+  /// for measurements made before the two were separated.
+  FreqResponse get analysisResponse => _analysis ?? response;
 
   /// Per-point standard deviation across the repeated captures that were
   /// averaged into [response]. Empty when only one capture was taken, which is

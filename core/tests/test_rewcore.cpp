@@ -312,21 +312,44 @@ static void testFfiCalibration() {
   const int points = 48;
   std::vector<double> f1(points), m1(points), f2(points), m2(points);
 
-  const size_t n1 = rew_measure_fr(sweep.data(), sweep.size(), sweep.data(),
-                                   sweep.size(), spec.fs, 50, 18000, 24, points,
-                                   nullptr, nullptr, 0, 0, f1.data(), m1.data(), nullptr, points);
+  std::vector<double> analysis(points);
+  rew_measure_request req = {};
+  req.emitted = sweep.data(); req.emittedLen = sweep.size();
+  req.recorded = sweep.data(); req.recordedLen = sweep.size();
+  req.fs = spec.fs; req.fMin = 50; req.fMax = 18000;
+  req.smoothFrac = 24; req.points = points; req.cap = points;
+  req.freqOut = f1.data(); req.magOut = m1.data();
+  req.magAnalysisOut = analysis.data();
+  const size_t n1 = rew_measure_fr(&req);
 
   // A flat +3 dB mic calibration should pull the measured response down by 3 dB.
   std::vector<double> calF = {20, 20000};
   std::vector<double> calG = {3, 3};
-  const size_t n2 = rew_measure_fr(sweep.data(), sweep.size(), sweep.data(),
-                                   sweep.size(), spec.fs, 50, 18000, 24, points,
-                                   calF.data(), calG.data(), calF.size(),
-                                   0, f2.data(), m2.data(), nullptr, points);
+  rew_measure_request calReq = req;
+  calReq.calFreq = calF.data(); calReq.calGain = calG.data();
+  calReq.calN = calF.size();
+  calReq.freqOut = f2.data(); calReq.magOut = m2.data();
+  calReq.magAnalysisOut = nullptr;
+  const size_t n2 = rew_measure_fr(&calReq);
   CHECK(n1 == n2 && n1 > 0);
   // Compare a mid-band point.
   const std::size_t mid = n1 / 2;
   CHECK_NEAR(m1[mid] - m2[mid], 3.0, 0.3);
+
+  // The analysis curve must be produced, and must be its own curve: asking for
+  // heavy display smoothing must not coarsen what the fitter reads.
+  rew_measure_request coarse = req;
+  std::vector<double> coarseDisplay(points), fineAnalysis(points);
+  coarse.smoothFrac = 3;              // 1/3 octave: broad tonal balance only
+  coarse.analysisSmoothFrac = 24;     // what the fitter should still see
+  coarse.magOut = coarseDisplay.data();
+  coarse.magAnalysisOut = fineAnalysis.data();
+  CHECK(rew_measure_fr(&coarse) > 0);
+  bool differs = false;
+  for (int i = 0; i < points; ++i) {
+    if (std::fabs(coarseDisplay[i] - fineAnalysis[i]) > 1e-9) differs = true;
+  }
+  CHECK(differs);
 }
 
 static void testFfiPeqErrorOut() {

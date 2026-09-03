@@ -50,37 +50,55 @@ size_t rew_generate_noise(double fs, double durationSec, double fLo, double fHi,
   return noise.size();
 }
 
-size_t rew_measure_fr(const double* emitted, size_t emittedLen,
-                      const double* recorded, size_t recordedLen, double fs,
-                      double fMin, double fMax, double smoothFrac, size_t points,
-                      const double* calFreq, const double* calGain, size_t calN,
-                      int timeReferencePhase, double* freqOut, double* magOut,
-                      double* phaseOut, size_t cap) {
-  if (!emitted || !recorded || !freqOut || !magOut) return 0;
-  std::vector<double> em(emitted, emitted + emittedLen);
-  std::vector<double> rec(recorded, recorded + recordedLen);
+size_t rew_measure_request_size(void) { return sizeof(rew_measure_request); }
+
+size_t rew_measure_fr(const rew_measure_request* req) {
+  if (!req || !req->emitted || !req->recorded || !req->freqOut || !req->magOut) {
+    return 0;
+  }
+  std::vector<double> em(req->emitted, req->emitted + req->emittedLen);
+  std::vector<double> rec(req->recorded, req->recorded + req->recordedLen);
 
   const std::vector<double> ir = deconvolve(em, rec);
-  FreqResponse fr = frequencyResponse(ir, fs, 0, timeReferencePhase != 0);
-  if (smoothFrac > 0.0) fr = smoothFractionalOctave(fr, smoothFrac);
+  const FreqResponse raw =
+      frequencyResponse(ir, req->fs, 0, req->timeReferencePhase != 0);
 
-  if (calFreq && calGain && calN > 0) {
-    MicCalibration cal;
-    cal.freqHz.assign(calFreq, calFreq + calN);
-    cal.gainDb.assign(calGain, calGain + calN);
-    fr = applyMicCalibration(fr, cal);
+  MicCalibration cal;
+  const bool haveCal = req->calFreq && req->calGain && req->calN > 0;
+  if (haveCal) {
+    cal.freqHz.assign(req->calFreq, req->calFreq + req->calN);
+    cal.gainDb.assign(req->calGain, req->calGain + req->calN);
   }
 
-  const size_t n = std::min(points, cap);
-  const FreqResponse grid = resampleLog(fr, fMin, fMax, n);
-  for (size_t i = 0; i < grid.freqHz.size(); ++i) {
-    freqOut[i] = grid.freqHz[i];
-    magOut[i] = grid.magDb[i];
-    if (phaseOut) {
-      phaseOut[i] = grid.hasPhase() ? grid.phaseDeg[i] : 0.0;
+  // One deconvolution and one FFT, smoothed two ways: the user's setting for
+  // what is drawn, and a fixed fine setting for what the fitter reads.
+  auto finish = [&](double frac) {
+    FreqResponse fr = frac > 0.0 ? smoothFractionalOctave(raw, frac) : raw;
+    if (haveCal) fr = applyMicCalibration(fr, cal);
+    return resampleLog(fr, req->fMin, req->fMax,
+                       std::min(req->points, req->cap));
+  };
+
+  const FreqResponse display = finish(req->smoothFrac);
+  for (size_t i = 0; i < display.freqHz.size(); ++i) {
+    req->freqOut[i] = display.freqHz[i];
+    req->magOut[i] = display.magDb[i];
+    if (req->phaseOut) {
+      req->phaseOut[i] = display.hasPhase() ? display.phaseDeg[i] : 0.0;
     }
   }
-  return grid.freqHz.size();
+
+  if (req->magAnalysisOut) {
+    const double frac =
+        req->analysisSmoothFrac > 0.0 ? req->analysisSmoothFrac : 24.0;
+    // Skip the second pass when it would be identical work.
+    const FreqResponse analysis =
+        frac == req->smoothFrac ? display : finish(frac);
+    for (size_t i = 0; i < analysis.magDb.size(); ++i) {
+      req->magAnalysisOut[i] = analysis.magDb[i];
+    }
+  }
+  return display.freqHz.size();
 }
 
 size_t rew_response_spread(const double* mags, size_t count, size_t n,

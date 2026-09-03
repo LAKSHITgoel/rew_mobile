@@ -228,7 +228,7 @@ class MeasurementService {
     return Isolate.run(() {
       final core = Rewcore.open(libraryPath: lib);
       final level = core.rmsDbfs(recorded);
-      final response = core.measureFr(
+      final curves = core.measureCurves(
         emitted: stimulus,
         recorded: recorded,
         fs: fs,
@@ -239,7 +239,10 @@ class MeasurementService {
         calibration: cal,
       );
       return Measurement(
-          response: response, levelDbfs: level, noiseFloor: noiseFloor);
+          response: curves.display,
+          analysis: curves.analysis,
+          levelDbfs: level,
+          noiseFloor: noiseFloor);
     });
   }
 
@@ -263,22 +266,25 @@ class MeasurementService {
     // it costs a whole extra capture.
     final noise = withNoiseFloor ? await measureNoiseFloor(band: band) : null;
     final all = <FreqResponse>[];
+    final allAnalysis = <FreqResponse>[];
     var levelSum = 0.0;
     for (var i = 0; i < n; i++) {
       final m = await measureOnce(band: band);
       all.add(m.response);
+      allAnalysis.add(m.analysisResponse);
       levelSum += m.levelDbfs;
     }
     // Keep how much the captures disagreed, not just their average: it is what
     // separates a property of the car from something that happened once.
     final lib = libraryPath;
-    final spread = all.length < 2
+    final spread = allAnalysis.length < 2
         ? <double>[]
         : await Isolate.run(
-            () => Rewcore.open(libraryPath: lib).responseSpread(all));
+            () => Rewcore.open(libraryPath: lib).responseSpread(allAnalysis));
 
     return Measurement(
         response: _powerAverage(all),
+        analysis: _powerAverage(allAnalysis),
         levelDbfs: levelSum / n,
         noiseFloor: noise,
         spreadDb: spread);
@@ -318,7 +324,7 @@ class MeasurementService {
           double maxCutDb = 6.0,
           double minSnrDb = 10,
           TargetShape target = const TargetShape()}) =>
-      fitEq(m.response,
+      fitEq(m.analysisResponse,
           maxBands: maxBands,
           band: band,
           targetPercentile: targetPercentile,
