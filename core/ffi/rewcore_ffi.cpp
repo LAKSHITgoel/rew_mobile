@@ -54,13 +54,14 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
                       const double* recorded, size_t recordedLen, double fs,
                       double fMin, double fMax, double smoothFrac, size_t points,
                       const double* calFreq, const double* calGain, size_t calN,
-                      double* freqOut, double* magOut, size_t cap) {
+                      int timeReferencePhase, double* freqOut, double* magOut,
+                      double* phaseOut, size_t cap) {
   if (!emitted || !recorded || !freqOut || !magOut) return 0;
   std::vector<double> em(emitted, emitted + emittedLen);
   std::vector<double> rec(recorded, recorded + recordedLen);
 
   const std::vector<double> ir = deconvolve(em, rec);
-  FreqResponse fr = frequencyResponse(ir, fs);
+  FreqResponse fr = frequencyResponse(ir, fs, 0, timeReferencePhase != 0);
   if (smoothFrac > 0.0) fr = smoothFractionalOctave(fr, smoothFrac);
 
   if (calFreq && calGain && calN > 0) {
@@ -75,6 +76,9 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
   for (size_t i = 0; i < grid.freqHz.size(); ++i) {
     freqOut[i] = grid.freqHz[i];
     magOut[i] = grid.magDb[i];
+    if (phaseOut) {
+      phaseOut[i] = grid.hasPhase() ? grid.phaseDeg[i] : 0.0;
+    }
   }
   return grid.freqHz.size();
 }

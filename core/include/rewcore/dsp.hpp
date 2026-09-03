@@ -72,17 +72,36 @@ double irPeakIndex(const std::vector<double>& ir);
 
 // ---- Frequency response ---------------------------------------------------
 
-// A magnitude frequency response sampled at a set of frequencies.
+// A frequency response sampled at a set of frequencies.
+//
+// `phaseDeg` is optional (empty where phase is not meaningful, e.g. after a
+// power average of spatially separated captures, which destroys phase). When
+// present it is UNWRAPPED, so a pure delay shows as a straight downward ramp
+// rather than sawtoothing between +-180.
 struct FreqResponse {
   std::vector<double> freqHz;
   std::vector<double> magDb;
+  std::vector<double> phaseDeg;
+
+  bool hasPhase() const { return phaseDeg.size() == freqHz.size(); }
 };
+
+// Remove the +-180 wraps from a phase curve in place, so it can be interpolated
+// and read as a continuous quantity.
+void unwrapPhaseDeg(std::vector<double>& phaseDeg);
 
 // Compute the (unsmoothed) magnitude response from an impulse response.
 // A half-Hann window of `windowLen` samples is applied around the IR peak before the
 // FFT to time-gate reflections; pass 0 to use the whole IR.
+// When `timeReference` is true the impulse response is rotated so its peak sits
+// at t=0 before the transform. That removes the bulk propagation delay, which is
+// essential for phase to be readable: over Bluetooth the path delay is tens of
+// milliseconds, which alone is thousands of degrees of phase at 1 kHz and swamps
+// the shape you actually care about. Magnitude is unaffected. Leave it false to
+// measure the delay itself.
 FreqResponse frequencyResponse(const std::vector<double>& ir, double fs,
-                               std::size_t windowLen = 0);
+                               std::size_t windowLen = 0,
+                               bool timeReference = false);
 
 // Fractional-octave smoothing (e.g. fractionOfOctave = 24 -> 1/24 octave), the kind
 // used to make measured car responses readable and to drive the EQ fitter.

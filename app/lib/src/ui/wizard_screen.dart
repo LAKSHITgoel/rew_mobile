@@ -9,7 +9,9 @@ import '../platform/file_picker.dart';
 import '../services/dsp_math.dart';
 import '../services/time_align.dart';
 import '../wizard/wizard_controller.dart';
+import 'detailed_chart.dart';
 import 'dsp_entry_sheet.dart';
+import 'measurement_detail_screen.dart';
 import 'fr_chart.dart';
 
 class WizardScreen extends StatefulWidget {
@@ -215,6 +217,51 @@ class _WizardScreenState extends State<WizardScreen> {
       ),
     );
     if (band != null) c.setBand(band);
+  }
+
+  /// Per-driver detail. This one carries phase — a single capture is not
+  /// power-averaged — which is what you need to judge whether a crossover is
+  /// actually summing rather than cancelling.
+  void _openDriverDetail() {
+    final fr = c.lastDriverMeasurement;
+    if (fr == null) return;
+    final ch = c.measuringChannel;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MeasurementDetailScreen(
+        title: '${c.project.name} — ${ch.name}',
+        subtitle: '${c.band.label} · '
+            '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
+            'smoothing · ${c.hasCalibration ? 'mic-calibrated' : 'no mic calibration'} '
+            '· level ${c.levelLabel(ch.id)}',
+        traces: [
+          DetailedTrace(fr, const Color(0xFF7FB2E5), ch.name,
+              showPhase: fr.hasPhase),
+        ],
+      ),
+    ));
+  }
+
+  /// Full-size graph with export, for getting a second opinion on a result
+  /// that looks wrong.
+  void _openDetail(FreqResponse measured, EqResult? eq) {
+    final traces = <DetailedTrace>[
+      DetailedTrace(measured, const Color(0xFF7FB2E5), 'Measured',
+          showPhase: measured.hasPhase),
+      if (eq != null)
+        DetailedTrace(applyEqPreview(measured, eq.bands, 48000),
+            const Color(0xFF6DD98C), 'Predicted after EQ'),
+    ];
+    final cal = c.hasCalibration ? 'mic-calibrated' : 'no mic calibration';
+    final lvl = c.levelLabel('system');
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MeasurementDetailScreen(
+        title: '${c.project.name} — ${c.band.label}',
+        subtitle: '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
+            'smoothing · $cal · level $lvl · '
+            '${DateTime.now().toLocal().toString().split('.').first}',
+        traces: traces,
+      ),
+    ));
   }
 
   /// One-time absolute-SPL calibration. The mic's own sensitivity can't give
@@ -690,6 +737,14 @@ class _WizardScreenState extends State<WizardScreen> {
             ),
           ),
         ),
+        if (c.lastDriverMeasurement != null) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => _openDriverDetail(),
+            icon: const Icon(Icons.insights),
+            label: Text('Detailed graph & export — ${c.measuringChannel.name}'),
+          ),
+        ],
         const SizedBox(height: 8),
         _channelLevelsCard(),
         const SizedBox(height: 8),
@@ -934,6 +989,13 @@ class _WizardScreenState extends State<WizardScreen> {
             ),
             icon: const Icon(Icons.list_alt),
             label: const Text('View DSP entry sheet'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed:
+                measured == null ? null : () => _openDetail(measured, eq),
+            icon: const Icon(Icons.insights),
+            label: const Text('Detailed graph & export'),
           ),
         ],
       ],

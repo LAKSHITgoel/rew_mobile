@@ -314,7 +314,7 @@ static void testFfiCalibration() {
 
   const size_t n1 = rew_measure_fr(sweep.data(), sweep.size(), sweep.data(),
                                    sweep.size(), spec.fs, 50, 18000, 24, points,
-                                   nullptr, nullptr, 0, f1.data(), m1.data(), points);
+                                   nullptr, nullptr, 0, 0, f1.data(), m1.data(), nullptr, points);
 
   // A flat +3 dB mic calibration should pull the measured response down by 3 dB.
   std::vector<double> calF = {20, 20000};
@@ -322,7 +322,7 @@ static void testFfiCalibration() {
   const size_t n2 = rew_measure_fr(sweep.data(), sweep.size(), sweep.data(),
                                    sweep.size(), spec.fs, 50, 18000, 24, points,
                                    calF.data(), calG.data(), calF.size(),
-                                   f2.data(), m2.data(), points);
+                                   0, f2.data(), m2.data(), nullptr, points);
   CHECK(n1 == n2 && n1 > 0);
   // Compare a mid-band point.
   const std::size_t mid = n1 / 2;
@@ -365,6 +365,127 @@ static double bandLevelDb(const std::vector<double>& x, double fs, double f1,
     }
   }
   return cnt ? 20.0 * std::log10(acc / cnt + 1e-12) : -240.0;
+}
+
+// Linear interpolation of a response's phase at a frequency.
+static double phaseAt(const FreqResponse& fr, double f) {
+  if (f <= fr.freqHz.front()) return fr.phaseDeg.front();
+  if (f >= fr.freqHz.back()) return fr.phaseDeg.back();
+  for (std::size_t i = 1; i < fr.freqHz.size(); ++i) {
+    if (fr.freqHz[i] >= f) {
+      const double t =
+          (f - fr.freqHz[i - 1]) / (fr.freqHz[i] - fr.freqHz[i - 1]);
+      return fr.phaseDeg[i - 1] + t * (fr.phaseDeg[i] - fr.phaseDeg[i - 1]);
+    }
+  }
+  return fr.phaseDeg.back();
+}
+
+static void testPhaseUnwrap() {
+  std::printf("test: phase unwrapping\n");
+  // A sawtooth that really represents a continuous downward ramp.
+  std::vector<double> p = {170, -170, -150, 170, 150};
+  unwrapPhaseDeg(p);
+  for (std::size_t i = 1; i < p.size(); ++i) {
+    CHECK(std::fabs(p[i] - p[i - 1]) <= 180.0 + 1e-9);
+  }
+  // 170 -> -170 is really +20 degrees, not -340.
+  CHECK_NEAR(p[1], 190.0, 1e-9);
+}
+
+static void testPhaseOfPureDelay() {
+  std::printf("test: a pure delay measures as linear phase\n");
+  const double fs = 48000;
+  SweepSpec spec;
+  spec.fs = fs;
+  spec.f1 = 50;
+  spec.f2 = 18000;
+  spec.durationSec = 1.0;
+  const std::vector<double> emitted = generateExpSweep(spec);
+
+  const std::size_t D = 32;  // samples of pure delay
+  std::vector<double> recorded(D + emitted.size(), 0.0);
+  for (std::size_t i = 0; i < emitted.size(); ++i) recorded[D + i] = emitted[i];
+
+  const std::vector<double> ir = deconvolve(emitted, recorded);
+  const FreqResponse fr = frequencyResponse(ir, fs);
+  CHECK(fr.hasPhase());
+
+  // phase(f) = -360 * f * D / fs, so the slope gives back the delay.
+  for (double f : {1000.0, 4000.0, 8000.0}) {
+    const double expected = -360.0 * f * static_cast<double>(D) / fs;
+    CHECK_NEAR(phaseAt(fr, f), expected, 6.0);
+  }
+  // Recover the group delay from two points and compare with D.
+  const double p1 = phaseAt(fr, 2000.0), p2 = phaseAt(fr, 6000.0);
+  const double delaySamples = -(p2 - p1) / 360.0 / (6000.0 - 2000.0) * fs;
+  std::printf("  recovered delay %.2f samples (expected %zu)\n", delaySamples, D);
+  CHECK_NEAR(delaySamples, static_cast<double>(D), 1.0);
+}
+
+static void testTimeReferencedPhase() {
+  std::printf("test: time referencing removes bulk delay from phase\n");
+  const double fs = 48000;
+  SweepSpec spec;
+  spec.fs = fs;
+  spec.f1 = 50;
+  spec.f2 = 18000;
+  spec.durationSec = 1.0;
+  const std::vector<double> emitted = generateExpSweep(spec);
+
+  // A big flight time, like Bluetooth: 50 ms is ~18000 degrees at 1 kHz.
+  const std::size_t D = static_cast<std::size_t>(0.05 * fs);
+  std::vector<double> recorded(D + emitted.size(), 0.0);
+  for (std::size_t i = 0; i < emitted.size(); ++i) recorded[D + i] = emitted[i];
+  const std::vector<double> ir = deconvolve(emitted, recorded);
+
+  const FreqResponse raw = frequencyResponse(ir, fs, 0, false);
+  const FreqResponse ref = frequencyResponse(ir, fs, 0, true);
+
+  // Raw phase is swamped by the delay...
+  CHECK(std::fabs(phaseAt(raw, 1000.0)) > 1000.0);
+  // ...but time-referenced it is essentially flat, because a pure delay has no
+  // phase character of its own once the flight time is removed.
+  std::printf("  raw %.0f deg -> referenced %.1f deg at 1 kHz\n",
+              phaseAt(raw, 1000.0), phaseAt(ref, 1000.0));
+  CHECK(std::fabs(phaseAt(ref, 1000.0)) < 20.0);
+  CHECK(std::fabs(phaseAt(ref, 5000.0)) < 20.0);
+
+  // Magnitude must be untouched by the rotation.
+  CHECK_NEAR(frAt(raw, 1000.0), frAt(ref, 1000.0), 0.01);
+}
+
+static void testPhaseOfKnownFilters() {
+  std::printf("test: measured phase of known filters\n");
+  const double fs = 48000;
+  SweepSpec spec;
+  spec.fs = fs;
+  spec.f1 = 50;
+  spec.f2 = 18000;
+  spec.durationSec = 1.0;
+  const std::vector<double> emitted = generateExpSweep(spec);
+
+  auto measure = [&](const Biquad& bq) {
+    std::vector<double> padded = emitted;
+    padded.insert(padded.end(), 8192, 0.0);
+    const std::vector<double> rec = applyBiquad(bq, padded);
+    return frequencyResponse(deconvolve(emitted, rec), fs);
+  };
+
+  // A peaking filter is symmetric about its centre: zero phase shift there.
+  const FreqResponse peak = measure(makePeaking(1000.0, fs, 6.0, 2.0));
+  std::printf("  peaking @1k phase = %.1f deg\n", phaseAt(peak, 1000.0));
+  CHECK_NEAR(phaseAt(peak, 1000.0), 0.0, 3.0);
+
+  // A 2nd-order high-pass sits at +90 degrees at its corner.
+  const FreqResponse hp = measure(makeHighPass(1000.0, fs));
+  std::printf("  2nd-order HP @fc phase = %.1f deg\n", phaseAt(hp, 1000.0));
+  CHECK_NEAR(phaseAt(hp, 1000.0), 90.0, 5.0);
+
+  // ...and a 2nd-order low-pass at -90.
+  const FreqResponse lp = measure(makeLowPass(1000.0, fs));
+  std::printf("  2nd-order LP @fc phase = %.1f deg\n", phaseAt(lp, 1000.0));
+  CHECK_NEAR(phaseAt(lp, 1000.0), -90.0, 5.0);
 }
 
 static void testRmsDbfs() {
@@ -526,6 +647,10 @@ int main() {
   testRecommendCrossover();
   testFfiCalibration();
   testFfiPeqErrorOut();
+  testPhaseUnwrap();
+  testPhaseOfPureDelay();
+  testTimeReferencedPhase();
+  testPhaseOfKnownFilters();
   testRmsDbfs();
   testPinkNoise();
   testCalibrationRealUmikFormat();

@@ -14,6 +14,22 @@ class NativeFilePicker {
   static Future<String?> pickTextFile() =>
       _channel.invokeMethod<String>('pickTextFile');
 
+  /// Directory the share sheet can read from (app-specific external storage,
+  /// so no storage permission is needed).
+  static Future<String?> exportDirectory() async {
+    try {
+      return await _channel.invokeMethod<String>('exportDir');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  /// Hands files to the system share sheet.
+  static Future<void> shareFiles(List<String> paths, {String mime = '*/*'}) =>
+      _channel.invokeMethod<void>('shareFiles', {'paths': paths, 'mime': mime});
+
   /// Directory for saved tunes. Returns null where unimplemented, in which case
   /// the caller should fall back to in-memory storage.
   static Future<String?> appDirectory() async {

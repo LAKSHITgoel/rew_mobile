@@ -44,6 +44,11 @@ kotlin {
     }
 }
 
+dependencies {
+    // FileProvider, for handing exported graphs to the share sheet.
+    implementation("androidx.core:core-ktx:1.13.1")
+}
+
 flutter {
     source = "../.."
 }

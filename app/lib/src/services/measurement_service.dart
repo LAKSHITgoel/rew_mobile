@@ -122,6 +122,9 @@ class MeasurementService {
 
   static FreqResponse _powerAverage(List<FreqResponse> ms) {
     if (ms.isEmpty) return FreqResponse([], []);
+    // Averaging power across spatially separated captures discards phase, but a
+    // single capture has nothing to average — keep its phase.
+    if (ms.length == 1) return ms.first;
     final freq = ms.first.freqHz;
     final mag = List<double>.filled(freq.length, 0);
     for (var i = 0; i < freq.length; i++) {

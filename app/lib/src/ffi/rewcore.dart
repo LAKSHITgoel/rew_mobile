@@ -85,11 +85,15 @@ class Rewcore {
     double smoothFrac = 24,
     int points = 96,
     MicCalibration? calibration,
+    // Removing the flight time is what makes phase readable at all: over
+    // Bluetooth the path delay alone is thousands of degrees at 1 kHz.
+    bool timeReferencePhase = true,
   }) {
     final em = calloc<ffi.Double>(emitted.length);
     final rec = calloc<ffi.Double>(recorded.length);
     final freqOut = calloc<ffi.Double>(points);
     final magOut = calloc<ffi.Double>(points);
+    final phaseOut = calloc<ffi.Double>(points);
 
     // Optional mic calibration. A direct null-check inside the `if` promotes `cal`
     // to non-null without needing `!`, and works across SDK versions.
@@ -109,16 +113,19 @@ class Rewcore {
       rec.asTypedList(recorded.length).setAll(0, recorded);
       final n = _b.rewMeasureFr(
           em, emitted.length, rec, recorded.length, fs, fMin, fMax, smoothFrac,
-          points, calFreq, calGain, calN, freqOut, magOut, points);
+          points, calFreq, calGain, calN, timeReferencePhase ? 1 : 0,
+          freqOut, magOut, phaseOut, points);
       return FreqResponse(
         List<double>.from(freqOut.asTypedList(n)),
         List<double>.from(magOut.asTypedList(n)),
+        List<double>.from(phaseOut.asTypedList(n)),
       );
     } finally {
       calloc.free(em);
       calloc.free(rec);
       calloc.free(freqOut);
       calloc.free(magOut);
+      calloc.free(phaseOut);
       if (calN > 0) {
         calloc.free(calFreq);
         calloc.free(calGain);

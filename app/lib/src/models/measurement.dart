@@ -3,20 +3,29 @@
 
 /// A magnitude frequency response sampled on a (log) frequency grid.
 class FreqResponse {
-  FreqResponse(this.freqHz, this.magDb)
+  FreqResponse(this.freqHz, this.magDb, [this.phaseDeg = const []])
       : assert(freqHz.length == magDb.length);
 
   final List<double> freqHz;
   final List<double> magDb;
 
+  /// Unwrapped phase in degrees. Empty where phase is not meaningful (e.g. after
+  /// power-averaging spatially separated captures, which discards it).
+  final List<double> phaseDeg;
+
+  bool get hasPhase => phaseDeg.length == freqHz.length;
   bool get isEmpty => freqHz.isEmpty;
   int get length => freqHz.length;
 
-  Map<String, dynamic> toJson() => {'freqHz': freqHz, 'magDb': magDb};
+  Map<String, dynamic> toJson() =>
+      {'freqHz': freqHz, 'magDb': magDb, 'phaseDeg': phaseDeg};
 
   factory FreqResponse.fromJson(Map<String, dynamic> j) => FreqResponse(
         (j['freqHz'] as List).map((e) => (e as num).toDouble()).toList(),
         (j['magDb'] as List).map((e) => (e as num).toDouble()).toList(),
+        ((j['phaseDeg'] ?? const []) as List)
+            .map((e) => (e as num).toDouble())
+            .toList(),
       );
 }
 

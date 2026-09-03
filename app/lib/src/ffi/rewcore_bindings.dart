@@ -35,12 +35,14 @@ typedef _RewMeasureFrC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Size, ffi.Pointer<ffi.Double>, ffi.Size,
     ffi.Double, ffi.Double, ffi.Double, ffi.Double, ffi.Size,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size);
+    ffi.Int, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, ffi.Size);
 typedef RewMeasureFrDart = int Function(
     ffi.Pointer<ffi.Double>, int, ffi.Pointer<ffi.Double>, int,
     double, double, double, double, int,
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int);
+    int, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, int);
 
 // size_t rew_fit_peq_flat(freq*, mag*, n, fs, fMin, fMax, maxBands,
 //                         freqOut*, gainOut*, qOut*, errOut*);

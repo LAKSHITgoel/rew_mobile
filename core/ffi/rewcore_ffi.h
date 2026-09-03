@@ -36,11 +36,15 @@ size_t rew_generate_noise(double fs, double durationSec, double fLo, double fHi,
 //
 // If `calN` > 0, a UMIK-1 microphone calibration (parallel calFreq/calGain arrays) is
 // applied to the response. Pass calFreq/calGain = NULL and calN = 0 to skip.
+// `phaseOut` may be NULL; when given it receives the UNWRAPPED phase in degrees.
+// Set `timeReferencePhase` to remove the bulk flight time before computing phase
+// (what you want for display); leave it 0 to measure the delay itself.
 size_t rew_measure_fr(const double* emitted, size_t emittedLen,
                       const double* recorded, size_t recordedLen, double fs,
                       double fMin, double fMax, double smoothFrac, size_t points,
                       const double* calFreq, const double* calGain, size_t calN,
-                      double* freqOut, double* magOut, size_t cap);
+                      int timeReferencePhase, double* freqOut, double* magOut,
+                      double* phaseOut, size_t cap);
 
 // Fit up to `maxBands` parametric EQ bands to move `measured` toward a flat target.
 // Inputs are parallel freq/mag arrays of length `n`. Writes chosen bands into the

@@ -5,6 +5,8 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
 import android.os.Build
 import com.rewmobile.audio.RewAudioPlugin
 import io.flutter.embedding.android.FlutterActivity
@@ -46,6 +48,14 @@ class MainActivity : FlutterActivity() {
                     // Where saved tunes live. Returned from native so the app
                     // needs no path_provider dependency.
                     "appDir" -> result.success(filesDir.absolutePath)
+                    // Somewhere the share sheet can read from.
+                    "exportDir" -> {
+                        val dir = File(getExternalFilesDir(null), "exports")
+                        dir.mkdirs()
+                        result.success(dir.absolutePath)
+                    }
+                    "shareFiles" -> shareFiles(call.argument("paths"),
+                        call.argument("mime") ?: "*/*", result)
                     else -> result.notImplemented()
                 }
             }
@@ -72,6 +82,36 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             pendingPick = null
             result.error("PICK", e.message, null)
+        }
+    }
+
+    /** Hands the given files to the system share sheet. */
+    private fun shareFiles(paths: List<String>?, mime: String,
+                           result: MethodChannel.Result) {
+        if (paths.isNullOrEmpty()) {
+            result.error("ARG", "no files to share", null); return
+        }
+        try {
+            val authority = "$packageName.fileprovider"
+            val uris = ArrayList<Uri>(paths.map {
+                FileProvider.getUriForFile(this, authority, File(it))
+            })
+            val intent = if (uris.size == 1) {
+                Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, uris[0])
+                }
+            } else {
+                Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                    type = mime
+                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                }
+            }
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(intent, "Share measurement"))
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("SHARE", e.message, null)
         }
     }
 

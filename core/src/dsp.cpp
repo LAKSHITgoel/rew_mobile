@@ -155,21 +155,51 @@ double irPeakIndex(const std::vector<double>& ir) {
   return static_cast<double>(peak);
 }
 
+void unwrapPhaseDeg(std::vector<double>& p) {
+  for (std::size_t i = 1; i < p.size(); ++i) {
+    double d = p[i] - p[i - 1];
+    while (d > 180.0) {
+      p[i] -= 360.0;
+      d = p[i] - p[i - 1];
+    }
+    while (d < -180.0) {
+      p[i] += 360.0;
+      d = p[i] - p[i - 1];
+    }
+  }
+}
+
 FreqResponse frequencyResponse(const std::vector<double>& ir, double fs,
-                               std::size_t windowLen) {
+                               std::size_t windowLen, bool timeReference) {
   std::vector<double> windowed = ir;
 
-  if (windowLen > 0 && windowLen < ir.size()) {
-    const std::size_t peak = static_cast<std::size_t>(std::lround(irPeakIndex(ir)));
+  if (timeReference && !ir.empty()) {
+    // Rotate so the arrival sits at t=0; the leftover phase is then the
+    // system's own, not the flight time from the speaker to the mic.
+    const std::size_t peak =
+        static_cast<std::size_t>(std::lround(irPeakIndex(ir))) % ir.size();
+    if (peak != 0) {
+      std::vector<double> rotated(ir.size());
+      for (std::size_t i = 0; i < ir.size(); ++i) {
+        rotated[i] = ir[(i + peak) % ir.size()];
+      }
+      windowed = rotated;
+    }
+  }
+
+  if (windowLen > 0 && windowLen < windowed.size()) {
+    const std::vector<double> src = windowed;
+    const std::size_t peak =
+        static_cast<std::size_t>(std::lround(irPeakIndex(src)));
     const std::size_t half = windowLen / 2;
     const std::size_t start = peak > half ? peak - half : 0;
-    const std::size_t end = std::min(ir.size(), start + windowLen);
-    windowed.assign(ir.size(), 0.0);
+    const std::size_t end = std::min(src.size(), start + windowLen);
+    windowed.assign(src.size(), 0.0);
     for (std::size_t i = start; i < end; ++i) {
       // Hann window across the gate.
       const double rel = static_cast<double>(i - start) / (end - start - 1);
       const double w = 0.5 * (1.0 - std::cos(2.0 * M_PI * rel));
-      windowed[i] = ir[i] * w;
+      windowed[i] = src[i] * w;
     }
   }
 
@@ -180,11 +210,14 @@ FreqResponse frequencyResponse(const std::vector<double>& ir, double fs,
   const std::size_t half = N / 2;
   fr.freqHz.reserve(half);
   fr.magDb.reserve(half);
+  fr.phaseDeg.reserve(half);
   for (std::size_t i = 1; i < half; ++i) {  // skip DC
     const double mag = std::abs(spec[i]);
     fr.freqHz.push_back(static_cast<double>(i) * fs / N);
     fr.magDb.push_back(20.0 * std::log10(mag > 1e-12 ? mag : 1e-12));
+    fr.phaseDeg.push_back(std::arg(spec[i]) * 180.0 / M_PI);
   }
+  unwrapPhaseDeg(fr.phaseDeg);
   return fr;
 }
 
@@ -204,29 +237,45 @@ FreqResponse smoothFractionalOctave(const FreqResponse& fr, double fractionOfOct
   const std::size_t n = fr.freqHz.size();
   std::size_t lo = 0, hi = 0;
   double runningSum = 0.0;
+  double phaseSum = 0.0;
+  const bool phase = fr.hasPhase();
+  if (phase) out.phaseDeg.resize(n);
 
   for (std::size_t i = 0; i < n; ++i) {
     const double loF = fr.freqHz[i] / ratio;
     const double hiF = fr.freqHz[i] * ratio;
-    while (hi < n && fr.freqHz[hi] <= hiF) runningSum += fr.magDb[hi++];
-    while (lo < hi && fr.freqHz[lo] < loF) runningSum -= fr.magDb[lo++];
+    while (hi < n && fr.freqHz[hi] <= hiF) {
+      runningSum += fr.magDb[hi];
+      if (phase) phaseSum += fr.phaseDeg[hi];
+      ++hi;
+    }
+    while (lo < hi && fr.freqHz[lo] < loF) {
+      runningSum -= fr.magDb[lo];
+      if (phase) phaseSum -= fr.phaseDeg[lo];
+      ++lo;
+    }
     const std::size_t cnt = hi - lo;
     out.magDb[i] = cnt ? runningSum / static_cast<double>(cnt) : fr.magDb[i];
+    // Phase is already unwrapped, so a plain average is meaningful here.
+    if (phase) {
+      out.phaseDeg[i] =
+          cnt ? phaseSum / static_cast<double>(cnt) : fr.phaseDeg[i];
+    }
   }
   return out;
 }
 
-static double interpDb(const FreqResponse& fr, double f) {
-  // Linear interpolation in dB over log-frequency; clamps at the edges.
-  const auto& xs = fr.freqHz;
-  if (f <= xs.front()) return fr.magDb.front();
-  if (f >= xs.back()) return fr.magDb.back();
+// Linear interpolation of `ys` over log-frequency; clamps at the edges.
+static double interpAt(const std::vector<double>& xs,
+                       const std::vector<double>& ys, double f) {
+  if (f <= xs.front()) return ys.front();
+  if (f >= xs.back()) return ys.back();
   const auto it = std::lower_bound(xs.begin(), xs.end(), f);
   const std::size_t hi = static_cast<std::size_t>(it - xs.begin());
   const std::size_t lo = hi - 1;
   const double t = (std::log(f) - std::log(xs[lo])) /
                    (std::log(xs[hi]) - std::log(xs[lo]));
-  return fr.magDb[lo] + t * (fr.magDb[hi] - fr.magDb[lo]);
+  return ys[lo] + t * (ys[hi] - ys[lo]);
 }
 
 FreqResponse resampleLog(const FreqResponse& fr, double fMin, double fMax,
@@ -235,13 +284,17 @@ FreqResponse resampleLog(const FreqResponse& fr, double fMin, double fMax,
   if (points == 0 || fr.freqHz.empty()) return out;
   out.freqHz.resize(points);
   out.magDb.resize(points);
+  const bool phase = fr.hasPhase();
+  if (phase) out.phaseDeg.resize(points);
   const double logMin = std::log(fMin);
   const double logMax = std::log(fMax);
   for (std::size_t i = 0; i < points; ++i) {
     const double t = static_cast<double>(i) / (points - 1);
     const double f = std::exp(logMin + t * (logMax - logMin));
     out.freqHz[i] = f;
-    out.magDb[i] = interpDb(fr, f);
+    out.magDb[i] = interpAt(fr.freqHz, fr.magDb, f);
+    // Safe to interpolate directly because the phase is unwrapped.
+    if (phase) out.phaseDeg[i] = interpAt(fr.freqHz, fr.phaseDeg, f);
   }
   return out;
 }

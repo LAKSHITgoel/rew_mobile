@@ -98,6 +98,39 @@ void main() {
     expect(plain.magDb[mid] - calibrated.magDb[mid], closeTo(3.0, 0.3));
   });
 
+  test('measureFr returns unwrapped phase for a known delay', () {
+    const fs = 48000.0;
+    final sweep = core.generateSweep(fs: fs, f1: 50, f2: 18000, durationSec: 1);
+    // Delay the "recording" by a known number of samples.
+    const d = 48; // 1 ms at 48 kHz
+    final rec = Float64List(sweep.length + d);
+    for (var i = 0; i < sweep.length; i++) {
+      rec[i + d] = sweep[i];
+    }
+    // Raw phase (no time referencing) so the delay itself is measurable.
+    final fr = core.measureFr(
+        emitted: sweep,
+        recorded: rec,
+        fs: fs,
+        fMin: 200,
+        fMax: 8000,
+        points: 64,
+        timeReferencePhase: false);
+    expect(fr.hasPhase, isTrue);
+
+    // Unwrapped phase of a pure delay is a straight ramp: recover the delay.
+    double phaseAt(double f) {
+      var best = 0;
+      for (var i = 1; i < fr.length; i++) {
+        if ((fr.freqHz[i] - f).abs() < (fr.freqHz[best] - f).abs()) best = i;
+      }
+      return fr.phaseDeg[best];
+    }
+    final slope = (phaseAt(4000) - phaseAt(1000)) / (4000 - 1000);
+    final delaySamples = -slope / 360 * fs;
+    expect(delaySamples, closeTo(d.toDouble(), 2.0));
+  });
+
   test('rew_rms_dbfs matches the -3.01 dBFS full-scale-sine convention', () {
     final sine = Float64List(4800);
     for (var i = 0; i < sine.length; i++) {
