@@ -83,6 +83,26 @@ flutter run --dart-define=USE_MOCK_AUDIO=true   # no mic/car needed
   phase, and the project still parses), but this machine has only the Command
   Line Tools — no Xcode, no CocoaPods — so none of it has seen a compiler. Treat
   every iOS claim as unverified until `flutter build ios` runs.
+- **Recommendations explain themselves.** Every EQ band and crossover edge
+  carries a reason code and a confidence score, and features the fitter refuses
+  to touch come back as advice rather than being omitted. Confidence is a
+  weighted geometric mean of width, depth, repeatability and edge proximity —
+  never a product, which collapses to single digits and tells the user nothing.
+- **A bad capture never becomes advice.** `assessCapture()` rejects clipped,
+  silent and mostly-empty recordings before anything is inferred. Clipping means
+  a flat top (consecutive samples pinned at the extreme), not merely touching
+  full scale — a clean 0 dBFS sine is not clipped.
+- **Two curves per measurement.** The display curve is smoothed however the user
+  asks; the analysis curve is smoothed at a fixed fine setting and is what the
+  fitter and the repeatability calculation read. Changing display smoothing must
+  never change a recommendation.
+- **Flat is not the target.** `TargetShape` (bass shelf + tilt above a pivot)
+  and the presets in `TargetPreset` express what the listener wants; the choice
+  is saved with the tune.
+- **The three C ABI calls pass structs**, not long positional argument lists,
+  and each exports a `*_size()` the Dart side asserts against. A struct ABI
+  turns a transposed argument into a compile error but a mismatched layout into
+  silent corruption, so the size check is not optional.
 - The mock audio backend is **opt-in only** (`--dart-define=USE_MOCK_AUDIO=true`)
   and paints a banner while active. It must never become a default again: a debug
   build once used it silently and fabricated whole measurements.
