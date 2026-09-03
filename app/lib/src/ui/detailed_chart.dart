@@ -25,8 +25,8 @@ class DetailedFrChart extends StatelessWidget {
     this.subtitle = '',
     this.fMin = 20,
     this.fMax = 20000,
-    this.dbMin = -30,
-    this.dbMax = 18,
+    this.dbMin,
+    this.dbMax,
     this.phaseMin = -180,
     this.phaseMax = 180,
   });
@@ -34,10 +34,39 @@ class DetailedFrChart extends StatelessWidget {
   final List<DetailedTrace> traces;
   final String title;
   final String subtitle;
-  final double fMin, fMax, dbMin, dbMax, phaseMin, phaseMax;
+  final double fMin, fMax, phaseMin, phaseMax;
+
+  /// Null means "fit the data". A fixed window silently clips: with a -30 dB
+  /// floor, a car measurement whose top end had collapsed drew as a flat line
+  /// along the bottom of the chart, which reads as "the app stops at 10 kHz"
+  /// rather than "there was nothing up there to measure".
+  final double? dbMin, dbMax;
+
+  /// The dB window to draw: the given bounds where set, otherwise the range of
+  /// the data, rounded out to 10 dB and never narrower than 40 dB so that a
+  /// nearly flat response is not magnified into drama.
+  ({double lo, double hi}) _dbRange() {
+    if (dbMin != null && dbMax != null) {
+      return (lo: dbMin!, hi: dbMax!);
+    }
+    var lo = double.infinity, hi = double.negativeInfinity;
+    for (final t in traces) {
+      for (final v in t.response.magDb) {
+        if (v.isNaN || v.isInfinite) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (lo > hi) return (lo: dbMin ?? -30, hi: dbMax ?? 18);
+    lo = (lo / 10).floorToDouble() * 10 - 5;
+    hi = (hi / 10).ceilToDouble() * 10 + 5;
+    if (hi - lo < 40) hi = lo + 40;
+    return (lo: dbMin ?? lo, hi: dbMax ?? hi);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final range = _dbRange();
     // Fixed dark palette rather than the app theme: an exported image should
     // look the same whoever opens it.
     return Container(
@@ -65,8 +94,8 @@ class DetailedFrChart extends StatelessWidget {
                 traces: traces,
                 fMin: fMin,
                 fMax: fMax,
-                dbMin: dbMin,
-                dbMax: dbMax,
+                dbMin: range.lo,
+                dbMax: range.hi,
                 phaseMin: phaseMin,
                 phaseMax: phaseMax,
               ),

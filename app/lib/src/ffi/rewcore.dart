@@ -167,6 +167,16 @@ class Rewcore {
     /// Where the flat target sits in the usable band's level distribution.
     /// Lower cuts peaks harder (flatter, quieter); higher corrects gently.
     double targetPercentile = 0.25,
+
+    /// Deepest cut any single band may apply. Past this the excess is reported
+    /// as [EqResult.suggestedLevelTrimDb] instead: a very deep cut is a channel
+    /// switched off, not a correction.
+    double maxCutDb = 6.0,
+
+    /// Per-point trust, same length as [measured]. Points marked false are left
+    /// out of the fit entirely — use it to exclude anything the sweep did not
+    /// lift clear of the noise.
+    List<bool>? valid,
   }) {
     final n = measured.length;
     final freq = calloc<ffi.Double>(n);
@@ -174,13 +184,22 @@ class Rewcore {
     final fOut = calloc<ffi.Double>(maxBands);
     final gOut = calloc<ffi.Double>(maxBands);
     final qOut = calloc<ffi.Double>(maxBands);
-    final errOut = calloc<ffi.Double>(2);
+    final errOut = calloc<ffi.Double>(3);
+    final validPtr = valid == null || valid.length != n
+        ? ffi.nullptr
+        : calloc<ffi.UnsignedChar>(n);
     try {
       freq.asTypedList(n).setAll(0, measured.freqHz);
       mag.asTypedList(n).setAll(0, measured.magDb);
+      if (validPtr != ffi.nullptr) {
+        final v = validPtr.cast<ffi.Uint8>().asTypedList(n);
+        for (var i = 0; i < n; i++) {
+          v[i] = valid![i] ? 1 : 0;
+        }
+      }
       final count = _b.rewFitPeqFlat(
-          freq, mag, n, fs, fMin, fMax, maxBands, targetPercentile,
-          fOut, gOut, qOut, errOut);
+          freq, mag, n, fs, fMin, fMax, maxBands, targetPercentile, maxCutDb,
+          validPtr.cast<ffi.UnsignedChar>(), fOut, gOut, qOut, errOut);
       final bands = <PeqBand>[];
       for (var i = 0; i < count; i++) {
         bands.add(PeqBand(freqHz: fOut[i], gainDb: gOut[i], q: qOut[i]));
@@ -189,6 +208,7 @@ class Rewcore {
         bands: bands,
         initialErrorDb: errOut[0],
         finalErrorDb: errOut[1],
+        suggestedLevelTrimDb: errOut[2],
       );
     } finally {
       calloc.free(freq);
@@ -197,6 +217,7 @@ class Rewcore {
       calloc.free(gOut);
       calloc.free(qOut);
       calloc.free(errOut);
+      if (validPtr != ffi.nullptr) calloc.free(validPtr);
     }
   }
 }

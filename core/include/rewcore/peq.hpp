@@ -57,9 +57,22 @@ struct PeqConstraints {
   // dip is not worth unlimited power.
   double maxBoostQ = 2.0;
   double maxBoostDb = 6.0;
+  // The deepest CUT a single band may apply. The rail (minGainDb) is what the
+  // hardware accepts; this is what is worth entering. A -12 dB band is not a
+  // correction, it is a channel turned off: on a subwoofer channel it takes the
+  // sub out of the system entirely, which is what happened in the car. A broad
+  // excess of bass is a level problem — turn the channel down and keep the
+  // headroom — so anything past this is reported as a level trim instead of
+  // being dialled into one band.
+  double maxCutDb = 6.0;
 };
 
 struct PeqFitResult {
+  // How much deeper the fit wanted to cut than maxCutDb allowed, in dB. Non-zero
+  // means the response has a broad excess that belongs on the channel's level
+  // control rather than in a filter: turn that channel down by this much.
+  double suggestedLevelTrimDb = 0.0;
+
   std::vector<PeqBand> bands;
   double initialErrorDb = 0.0;  // RMS error before EQ
   double finalErrorDb = 0.0;    // RMS error after EQ

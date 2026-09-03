@@ -8,6 +8,7 @@ import '../services/crossover_calc.dart';
 import '../platform/file_picker.dart';
 import '../services/dsp_math.dart';
 import '../services/time_align.dart';
+import '../services/measurement_service.dart';
 import '../wizard/wizard_controller.dart';
 import 'detailed_chart.dart';
 import 'dsp_entry_sheet.dart';
@@ -311,17 +312,30 @@ class _WizardScreenState extends State<WizardScreen> {
     // Measured only. The whole point of exporting is to get an independent
     // opinion on the tuning, so the app's own prediction is left off — it would
     // only anchor whoever (or whatever) looks at it.
+    //
+    // The noise floor IS included: without it there is no way to tell the car's
+    // response from the car's noise, and the part of the curve that is really
+    // just noise looks exactly as authoritative as the rest.
     final traces = <DetailedTrace>[
       DetailedTrace(measured, const Color(0xFF7FB2E5), 'Measured',
           showPhase: measured.hasPhase),
     ];
+    final noise = c.lastMeasurementFull?.noiseFloor;
+    if (noise != null && noise.length == measured.length) {
+      traces.add(DetailedTrace(noise, const Color(0xFF8A6A6A), 'Noise floor'));
+    }
     final cal = c.hasCalibration ? 'mic-calibrated' : 'no mic calibration';
     final lvl = c.levelLabel('system');
+    final usable = c.lastMeasurementFull?.usableBand();
+    final reach = usable == null
+        ? ''
+        : ' · clean 10 dB over noise up to '
+            '${usable.fHi >= 1000 ? '${(usable.fHi / 1000).toStringAsFixed(1)} kHz' : '${usable.fHi.round()} Hz'}';
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => MeasurementDetailScreen(
         title: '${c.project.name} — ${c.band.label}',
         subtitle: '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
-            'smoothing · $cal · level $lvl · '
+            'smoothing · ${measured.length} points · $cal · level $lvl$reach · '
             '${DateTime.now().toLocal().toString().split('.').first}',
         traces: traces,
       ),
@@ -1042,6 +1056,48 @@ class _WizardScreenState extends State<WizardScreen> {
             if (v != null) c.setEqStrength(v);
           },
         ),
+        const SizedBox(height: 8),
+        const Text('Resolution (smoothing)',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<Smoothing>(
+          value: c.smoothing,
+          isExpanded: true,
+          items: [
+            for (final s in Smoothing.values)
+              DropdownMenuItem(
+                  value: s,
+                  child: Text(s.label, style: const TextStyle(fontSize: 13))),
+          ],
+          onChanged: (v) {
+            if (v != null) c.setSmoothing(v);
+          },
+        ),
+        Text(
+            'Finer smoothing shows more detail and reports more points '
+            '(${c.service.config.gridPoints} at this setting). 1/24 is the '
+            'usual working choice; 1/3 shows only broad tonal balance.',
+            style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 8),
+        const Text('Deepest EQ cut',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<double>(
+          value: c.maxCutDb,
+          isExpanded: true,
+          items: const [
+            DropdownMenuItem(value: 3.0, child: Text('3 dB (gentle)')),
+            DropdownMenuItem(value: 6.0, child: Text('6 dB (recommended)')),
+            DropdownMenuItem(value: 9.0, child: Text('9 dB')),
+            DropdownMenuItem(value: 12.0, child: Text('12 dB (DSP limit)')),
+          ],
+          onChanged: (v) {
+            if (v != null) c.setMaxCut(v);
+          },
+        ),
+        Text(
+            'A very deep cut does not correct a channel, it switches it off. '
+            'Anything past this is reported as a level trim to dial into the '
+            "channel's gain instead.",
+            style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 12),
         if (measured != null)
           FrChart(curves: [

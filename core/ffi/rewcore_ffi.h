@@ -68,7 +68,8 @@ REW_EXPORT size_t rew_measure_fr(const double* emitted, size_t emittedLen,
 // up quieter), high values correct gently. Pass 0 for the default (0.25).
 REW_EXPORT size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
                         double fMin, double fMax, int maxBands,
-                        double targetPercentile, double* freqOut,
+                        double targetPercentile, double maxCutDb,
+                        const unsigned char* valid, double* freqOut,
                         double* gainOut, double* qOut, double* errOut);
 
 // Recommend crossover edges for one measured driver (parallel freq/mag, length `n`).

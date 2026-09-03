@@ -5,6 +5,7 @@
 // trust. It is injected here instead.
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -103,6 +104,74 @@ void main() {
     // later call, so the app could only be recovered by restarting it.
     final m = await svc.measureOnce(band: SweepBand.full);
     expect(m.response.length, greaterThan(10));
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('resolution follows the smoothing instead of a fixed coarse grid', () {
+    // 96 points across 20 Hz - 20 kHz is under 10 per octave: coarser than the
+    // 1/24-octave smoothing being displayed, so the grid, not the measurement,
+    // was the limit on visible detail.
+    const oneTwentyFourth = MeasurementConfig(smoothFrac: 24);
+    expect(oneTwentyFourth.gridPoints, greaterThan(400));
+    const third = MeasurementConfig(smoothFrac: 3);
+    expect(third.gridPoints, lessThan(oneTwentyFourth.gridPoints));
+    // An explicit count still wins, for tests that want a small grid.
+    expect(const MeasurementConfig(points: 96).gridPoints, 96);
+  });
+
+  test('a measurement carries a noise floor and computes SNR', () async {
+    final m = await service.measureWithNoiseFloor(band: SweepBand.full);
+    expect(m.noiseFloor, isNotNull);
+    expect(m.noiseFloor!.length, m.response.length);
+    final snr = m.snrDb;
+    expect(snr, isNotNull);
+    expect(snr!.length, m.response.length);
+    // The mock plays a real sweep against silence, so the sweep must win.
+    final median = ([...snr]..sort())[snr.length ~/ 2];
+    expect(median, greaterThan(0));
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('EQ never recommends a cut deeper than asked, and reports the trim',
+      () async {
+    // A wide bass excess, the shape that produced a -12 dB subwoofer band.
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      final f = math.exp(math.log(20) + t * (math.log(20000) - math.log(20)));
+      freq.add(f);
+      mag.add(f < 80 ? 14.0 : 0.0);
+    }
+    final eq = await service.fitEq(FreqResponse(freq, mag), maxCutDb: 6.0);
+    expect(eq.bands, isNotEmpty);
+    for (final b in eq.bands) {
+      expect(b.gainDb, greaterThanOrEqualTo(-6.0001));
+    }
+    expect(eq.suggestedLevelTrimDb, greaterThan(0));
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('EQ ignores the part of the curve that is only noise', () async {
+    // Everything above 500 Hz marked untrustworthy, as a Bluetooth link that
+    // gives out around 11 kHz would leave it.
+    const n = 200;
+    final freq = <double>[];
+    final mag = <double>[];
+    final valid = <bool>[];
+    for (var i = 0; i < n; i++) {
+      final t = i / (n - 1);
+      final f = math.exp(math.log(20) + t * (math.log(20000) - math.log(20)));
+      freq.add(f);
+      // A real peak low down, plus loud garbage up high.
+      mag.add(f < 100 ? 10.0 : (f > 500 ? (i.isEven ? 12.0 : -12.0) : 0.0));
+      valid.add(f <= 500);
+    }
+    final eq =
+        await service.fitEq(FreqResponse(freq, mag), valid: valid, maxBands: 8);
+    expect(eq.bands, isNotEmpty);
+    for (final b in eq.bands) {
+      expect(b.freqHz, lessThanOrEqualTo(500),
+          reason: 'placed a band in the noise-only region');
+    }
   }, timeout: const Timeout(Duration(minutes: 2)));
 }
 

@@ -239,6 +239,12 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
         continue;
       }
       gain = std::min(gain, c.maxBoostDb);
+    } else if (gain < -c.maxCutDb) {
+      // Deeper than a filter should go. Report the remainder as a level trim
+      // rather than dialling in a band that mutes the channel.
+      result.suggestedLevelTrimDb =
+          std::max(result.suggestedLevelTrimDb, -gain - c.maxCutDb);
+      gain = -c.maxCutDb;
     }
 
     result.bands.push_back({f0, gain, q});

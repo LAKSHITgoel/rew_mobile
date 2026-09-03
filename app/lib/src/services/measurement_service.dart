@@ -28,11 +28,59 @@ class MeasurementConfig {
     this.fMin = 20,
     this.fMax = 20000,
     this.smoothFrac = 24,
-    this.points = 96,
-  });
+    int? points,
+  }) : points = points ?? 0;
 
   final double fs, f1, f2, durationSec, fMin, fMax, smoothFrac;
+
+  /// 0 means "derive it from the smoothing", which is almost always what you
+  /// want; a fixed count is kept for tests.
   final int points;
+
+  /// How many log-spaced points to report.
+  ///
+  /// This used to be a flat 96 across 20 Hz – 20 kHz: under 10 points per
+  /// octave, coarser than the 1/24-octave smoothing it was displaying, so the
+  /// curve was resolution-limited by the plotting grid rather than by the
+  /// measurement. Detail that REW shows was being averaged away before it was
+  /// ever drawn.
+  ///
+  /// Sampling at twice the smoothing width keeps every feature the smoothing
+  /// preserves — 1/24 octave over ~10 octaves gives ~480 points.
+  int get gridPoints {
+    if (points > 0) return points;
+    final octaves = (math.log(fMax / fMin) / math.ln2).abs();
+    final perOctave = 2.0 * (smoothFrac <= 0 ? 48.0 : smoothFrac);
+    return (octaves * perOctave).round().clamp(96, 2400);
+  }
+
+  MeasurementConfig copyWith({double? smoothFrac, int? points}) =>
+      MeasurementConfig(
+        fs: fs,
+        f1: f1,
+        f2: f2,
+        durationSec: durationSec,
+        fMin: fMin,
+        fMax: fMax,
+        smoothFrac: smoothFrac ?? this.smoothFrac,
+        points: points ?? (this.points > 0 ? this.points : null),
+      );
+}
+
+/// Display/analysis smoothing, in fractions of an octave. REW offers the same
+/// ladder; 1/24 is the usual working choice for car audio, 1/3 shows only the
+/// broad tonal balance you would actually EQ.
+enum Smoothing {
+  none(0, 'None'),
+  oct48(48, '1/48 octave'),
+  oct24(24, '1/24 octave'),
+  oct12(12, '1/12 octave'),
+  oct6(6, '1/6 octave'),
+  oct3(3, '1/3 octave');
+
+  const Smoothing(this.fraction, this.label);
+  final double fraction;
+  final String label;
 }
 
 class MeasurementService {
@@ -45,7 +93,9 @@ class MeasurementService {
 
   final Rewcore _core;
   final AudioBackend _audio;
-  final MeasurementConfig config;
+  /// Mutable so the user can change smoothing (and with it the point
+  /// density) between measurements, the way REW lets you.
+  MeasurementConfig config;
 
   /// Where a background isolate should load the native library from. Null means
   /// "resolve the usual way", which is what the app does on a device; tests pass
@@ -103,7 +153,53 @@ class MeasurementService {
   }
 
   /// Run a single capture over [band]: magnitude response plus captured level.
-  Future<Measurement> measureOnce({SweepBand band = SweepBand.full}) async {
+  /// Measures the car's own noise the same way the sweep is measured: capture
+  /// while playing silence, then run the identical analysis against the same
+  /// stimulus. The result lands in the same units as a measurement, so
+  /// subtracting the two gives a real signal-to-noise ratio per frequency.
+  ///
+  /// This is the difference between a curve and a measurement. In the car,
+  /// engine, HVAC and road noise swamp the sweep above a few hundred Hz unless
+  /// it is played loudly, and a Bluetooth link running SBC drops everything
+  /// above roughly 11 kHz — both of which the old code drew as if they were the
+  /// response of the speakers.
+  Future<FreqResponse> measureNoiseFloor({SweepBand band = SweepBand.full}) async {
+    final stimulus = await sweepFor(band);
+    final silence = Float64List(stimulus.length);
+
+    final recorded = await _audio
+        .playSweepAndCapture(sweep: silence, fs: config.fs)
+        .timeout(
+      captureTimeout,
+      onTimeout: () => throw TimeoutException(
+          'The microphone did not return any audio while measuring the noise '
+          'floor. Check it is still plugged in, then try again.'),
+    );
+
+    final fs = config.fs;
+    final smooth = config.smoothFrac;
+    final pts = config.gridPoints;
+    final fLo = band.fLo;
+    final fHi = band.fHi;
+    final cal = calibration;
+    final lib = libraryPath;
+
+    return Isolate.run(() => Rewcore.open(libraryPath: lib).measureFr(
+          emitted: stimulus,
+          recorded: recorded,
+          fs: fs,
+          fMin: fLo,
+          fMax: fHi,
+          smoothFrac: smooth,
+          points: pts,
+          calibration: cal,
+        ));
+  }
+
+  Future<Measurement> measureOnce({
+    SweepBand band = SweepBand.full,
+    FreqResponse? noiseFloor,
+  }) async {
     final stimulus = await sweepFor(band);
 
     // Hard limit on the capture. The native side blocks in AudioRecord.read(),
@@ -123,7 +219,7 @@ class MeasurementService {
     // isolate; blocking the UI thread here is what triggers an ANR.
     final fs = config.fs;
     final smooth = config.smoothFrac;
-    final pts = config.points;
+    final pts = config.gridPoints;
     final fLo = band.fLo;
     final fHi = band.fHi;
     final cal = calibration;
@@ -142,8 +238,18 @@ class MeasurementService {
         points: pts,
         calibration: cal,
       );
-      return Measurement(response: response, levelDbfs: level);
+      return Measurement(
+          response: response, levelDbfs: level, noiseFloor: noiseFloor);
     });
+  }
+
+  /// [measureOnce] with the noise floor attached.
+  Future<Measurement> measureWithNoiseFloor(
+      {SweepBand band = SweepBand.full}) async {
+    final noise = await measureNoiseFloor(band: band);
+    final m = await measureOnce(band: band);
+    return Measurement(
+        response: m.response, levelDbfs: m.levelDbfs, noiseFloor: noise);
   }
 
   /// Recommend crossover edges from a single driver's measured response.
@@ -152,7 +258,10 @@ class MeasurementService {
 
   /// Run [n] captures (e.g. around the listening position) and power-average them.
   Future<Measurement> measureAveraged(int n,
-      {SweepBand band = SweepBand.full}) async {
+      {SweepBand band = SweepBand.full, bool withNoiseFloor = true}) async {
+    // Once per set: the car's noise does not change between mic positions, and
+    // it costs a whole extra capture.
+    final noise = withNoiseFloor ? await measureNoiseFloor(band: band) : null;
     final all = <FreqResponse>[];
     var levelSum = 0.0;
     for (var i = 0; i < n; i++) {
@@ -161,13 +270,17 @@ class MeasurementService {
       levelSum += m.levelDbfs;
     }
     return Measurement(
-        response: _powerAverage(all), levelDbfs: levelSum / n);
+        response: _powerAverage(all),
+        levelDbfs: levelSum / n,
+        noiseFloor: noise);
   }
 
   Future<EqResult> fitEq(FreqResponse measured,
       {int maxBands = 10,
       SweepBand band = SweepBand.full,
-      double targetPercentile = 0.25}) {
+      double targetPercentile = 0.25,
+      double maxCutDb = 6.0,
+      List<bool>? valid}) {
     final fs = config.fs;
     final fLo = band.fLo;
     final fHi = band.fHi;
@@ -179,8 +292,24 @@ class MeasurementService {
           fMax: fHi,
           maxBands: maxBands,
           targetPercentile: targetPercentile,
+          maxCutDb: maxCutDb,
+          valid: valid,
         ));
   }
+
+  /// [fitEq] over only the part of [m] that cleared the noise.
+  Future<EqResult> fitEqFor(Measurement m,
+          {int maxBands = 10,
+          SweepBand band = SweepBand.full,
+          double targetPercentile = 0.25,
+          double maxCutDb = 6.0,
+          double minSnrDb = 10}) =>
+      fitEq(m.response,
+          maxBands: maxBands,
+          band: band,
+          targetPercentile: targetPercentile,
+          maxCutDb: maxCutDb,
+          valid: m.noiseFloor == null ? null : m.trustworthy(minSnrDb: minSnrDb));
 
   static FreqResponse _powerAverage(List<FreqResponse> ms) {
     if (ms.isEmpty) return FreqResponse([], []);

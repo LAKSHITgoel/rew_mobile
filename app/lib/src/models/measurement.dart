@@ -35,9 +35,64 @@ class FreqResponse {
 /// measured at a sane volume; it is dBFS, which becomes dB SPL once an offset
 /// has been calibrated (differences between channels need no offset at all).
 class Measurement {
-  const Measurement({required this.response, required this.levelDbfs});
+  const Measurement({
+    required this.response,
+    required this.levelDbfs,
+    this.noiseFloor,
+  });
   final FreqResponse response;
   final double levelDbfs;
+
+  /// The same analysis run on a capture with nothing played, so it lands in the
+  /// same units as [response]: what the car's own noise (engine, HVAC, road,
+  /// the Bluetooth link) would have looked like had it been the signal.
+  ///
+  /// Everything the sweep did not clear is not a measurement of the car — it is
+  /// a picture of the noise. Without this the app drew that noise as if it were
+  /// a response and then recommended EQ from it.
+  final FreqResponse? noiseFloor;
+
+  /// Signal-to-noise in dB at each point of [response], or null if no noise
+  /// floor was captured.
+  List<double>? get snrDb {
+    final nf = noiseFloor;
+    if (nf == null || nf.length != response.length) return null;
+    return [
+      for (var i = 0; i < response.length; i++) response.magDb[i] - nf.magDb[i]
+    ];
+  }
+
+  /// Points whose SNR clears [minSnrDb]. These are the only ones worth fitting
+  /// EQ to or drawing conclusions from.
+  List<bool> trustworthy({double minSnrDb = 10}) {
+    final snr = snrDb;
+    if (snr == null) return List<bool>.filled(response.length, true);
+    return [for (final v in snr) v >= minSnrDb];
+  }
+
+  /// The contiguous band, starting from the low end, over which the measurement
+  /// clears [minSnrDb] — i.e. how far up the sweep actually got. A Bluetooth
+  /// link using SBC typically gives out somewhere around 11 kHz, which reads as
+  /// a response that "stops" partway up.
+  ({double fLo, double fHi})? usableBand({double minSnrDb = 10}) {
+    final ok = trustworthy(minSnrDb: minSnrDb);
+    if (snrDb == null || response.isEmpty) return null;
+    final lo = ok.indexOf(true);
+    if (lo < 0) return null;
+    // Walk down from the top for the first point that still has signal either
+    // side of it. A single failing point is a null in the response, not the end
+    // of the usable range; a run of them is where the sweep stopped arriving.
+    var hi = lo;
+    for (var i = ok.length - 1; i > lo; i--) {
+      if (!ok[i]) continue;
+      final neighboursOk = (i > 0 && ok[i - 1]) || (i + 1 < ok.length && ok[i + 1]);
+      if (neighboursOk) {
+        hi = i;
+        break;
+      }
+    }
+    return (fLo: response.freqHz[lo], fHi: response.freqHz[hi]);
+  }
 }
 
 /// One parametric EQ band, as entered into the DSP's own app.
@@ -63,11 +118,17 @@ class EqResult {
     required this.bands,
     required this.initialErrorDb,
     required this.finalErrorDb,
+    this.suggestedLevelTrimDb = 0,
   });
 
   final List<PeqBand> bands;
   final double initialErrorDb;
   final double finalErrorDb;
+
+  /// How much the fit wanted to cut beyond what one band should hold. Non-zero
+  /// means: turn this channel down by this much on the DSP's level control, and
+  /// keep the filters for the peaks that remain.
+  final double suggestedLevelTrimDb;
 }
 
 /// A frequency band to sweep and analyse.

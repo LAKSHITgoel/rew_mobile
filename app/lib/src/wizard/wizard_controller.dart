@@ -44,6 +44,34 @@ class WizardController extends ChangeNotifier {
 
   /// Set when a run fails, so the UI can show it rather than failing silently.
   String? lastError;
+
+  /// The last system measurement including its noise floor, so the chart can
+  /// show what was actually measured versus what was just noise.
+  Measurement? lastMeasurementFull;
+
+  /// Deepest cut any single EQ band may use. Matches what is worth typing into
+  /// the DSP: past this you turn the channel down instead.
+  double maxCutDb = 6.0;
+
+  Smoothing get smoothing => Smoothing.values.firstWhere(
+        (s) => s.fraction == service.config.smoothFrac,
+        orElse: () => Smoothing.oct24,
+      );
+
+  /// Changing smoothing also changes how many points are reported, so the grid
+  /// never limits the detail the smoothing keeps.
+  void setSmoothing(Smoothing s) {
+    service.config = service.config.copyWith(smoothFrac: s.fraction);
+    notifyListeners();
+  }
+
+  void setMaxCut(double db) {
+    maxCutDb = db;
+    notifyListeners();
+  }
+
+  static String _hz(double f) =>
+      f >= 1000 ? '${(f / 1000).toStringAsFixed(1)} kHz' : '${f.round()} Hz';
   String? status;
   MicInfo? mic;
 
@@ -303,15 +331,28 @@ class WizardController extends ChangeNotifier {
     await _run('Measuring system response…', () async {
       final m = await service.measureAveraged(averagingPositions, band: band);
       final fr = m.response;
-      final eq = await service.fitEq(fr,
-          maxBands: eqMaxBands, band: band, targetPercentile: eqStrength);
+      final eq = await service.fitEqFor(m,
+          maxBands: eqMaxBands,
+          band: band,
+          targetPercentile: eqStrength,
+          maxCutDb: maxCutDb);
       lastMeasurement = fr;
+      lastMeasurementFull = m;
       lastEq = eq;
       project.measured['system'] = fr;
       project.levelsDbfs['system'] = m.levelDbfs;
       project.eqBands['system'] = eq.bands;
       await store.save(project);
-      status = 'Measured ${fr.length} points; ${eq.bands.length} EQ bands.';
+
+      final usable = m.usableBand();
+      final reach = usable == null
+          ? ''
+          : ' Clean to ${_hz(usable.fHi)}.';
+      final trim = eq.suggestedLevelTrimDb > 0.5
+          ? ' Turn this channel down ${eq.suggestedLevelTrimDb.toStringAsFixed(1)} dB.'
+          : '';
+      status = 'Measured ${fr.length} points; '
+          '${eq.bands.length} EQ bands.$reach$trim';
     });
   }
 

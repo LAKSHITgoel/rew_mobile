@@ -341,13 +341,50 @@ static void testFfiPeqErrorOut() {
     freq[i] = std::exp(logMin + t * (logMax - logMin));
     mag[i] = cascadeMagnitudeDb(distortion, freq[i], fs);
   }
-  std::vector<double> fo(10), go(10), qo(10), err(2);
+  std::vector<double> fo(10), go(10), qo(10), err(3);
   const size_t bands = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20, 20000,
-                                        10, 0.0, fo.data(), go.data(), qo.data(),
-                                        err.data());
+                                        10, 0.0, 0.0, nullptr, fo.data(),
+                                        go.data(), qo.data(), err.data());
   CHECK(bands > 0);
   CHECK(err[0] > 1.0);          // initial error meaningful
   CHECK(err[1] < err[0]);       // EQ reduced it
+
+  // No band may exceed the practical cut depth: a -12 dB band does not correct
+  // a channel, it mutes it — which is what happened to a subwoofer in the car.
+  for (size_t i = 0; i < bands; ++i) CHECK(go[i] >= -6.0 - 1e-9);
+
+  // A validity mask must confine the fit to the points it marks. Marking only
+  // the bottom of the range as trustworthy is what stops noise above the
+  // Bluetooth link's cutoff from being "corrected".
+  std::vector<unsigned char> valid(n, 0);
+  for (int i = 0; i < n; ++i) valid[i] = freq[i] < 500.0 ? 1 : 0;
+  const size_t masked = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20,
+                                         20000, 10, 0.0, 0.0, valid.data(),
+                                         fo.data(), go.data(), qo.data(),
+                                         err.data());
+  CHECK(masked > 0);
+  for (size_t i = 0; i < masked; ++i) CHECK(fo[i] < 500.0);
+}
+
+static void testPeqReportsLevelTrim() {
+  std::printf("test: broad excess comes back as a level trim, not a mute\n");
+  const double fs = 48000.0;
+  const int n = 200;
+  std::vector<double> freq(n), mag(n);
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (int i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / (n - 1);
+    freq[i] = std::exp(logMin + t * (logMax - logMin));
+    // A wide, deep bass excess, like cabin gain on a subwoofer channel.
+    mag[i] = freq[i] < 80.0 ? 14.0 : 0.0;
+  }
+  std::vector<double> fo(10), go(10), qo(10), err(3);
+  const size_t bands = rew_fit_peq_flat(freq.data(), mag.data(), n, fs, 20, 20000,
+                                        10, 0.0, 6.0, nullptr, fo.data(),
+                                        go.data(), qo.data(), err.data());
+  CHECK(bands > 0);
+  for (size_t i = 0; i < bands; ++i) CHECK(go[i] >= -6.0 - 1e-9);
+  CHECK(err[2] > 0.0);  // and it says how far to turn the channel down
 }
 
 // Mean magnitude (dB) of a signal's spectrum between two frequencies.
@@ -699,6 +736,7 @@ int main() {
   testRecommendCrossover();
   testFfiCalibration();
   testFfiPeqErrorOut();
+  testPeqReportsLevelTrim();
   testPhaseUnwrap();
   testPhaseOfPureDelay();
   testTimeReferencedPhase();

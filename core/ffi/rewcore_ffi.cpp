@@ -85,12 +85,26 @@ size_t rew_measure_fr(const double* emitted, size_t emittedLen,
 
 size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
                         double fMin, double fMax, int maxBands,
-                        double targetPercentile, double* freqOut,
+                        double targetPercentile, double maxCutDb,
+                        const unsigned char* valid, double* freqOut,
                         double* gainOut, double* qOut, double* errOut) {
   if (!freq || !mag || !freqOut || !gainOut || !qOut) return 0;
   FreqResponse measured;
-  measured.freqHz.assign(freq, freq + n);
-  measured.magDb.assign(mag, mag + n);
+  // `valid` marks the points the sweep actually cleared the noise by. Dropping
+  // the rest is the whole game: fitting to noise is what produced -12 dB bands
+  // for a subwoofer. Points are simply omitted, which keeps every downstream
+  // statistic (level alignment, passband reference, error) over real data only.
+  if (valid) {
+    for (size_t i = 0; i < n; ++i) {
+      if (!valid[i]) continue;
+      measured.freqHz.push_back(freq[i]);
+      measured.magDb.push_back(mag[i]);
+    }
+    if (measured.freqHz.size() < 4) return 0;  // nothing trustworthy to fit
+  } else {
+    measured.freqHz.assign(freq, freq + n);
+    measured.magDb.assign(mag, mag + n);
+  }
 
   PeqConstraints c;
   c.fs = fs;
@@ -98,6 +112,7 @@ size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double 
   c.fMax = fMax;
   c.maxBands = maxBands;
   if (targetPercentile > 0.0) c.targetPercentile = targetPercentile;
+  if (maxCutDb > 0.0) c.maxCutDb = maxCutDb;
 
   const PeqFitResult res = fitPeq(measured, flatTarget(measured), c);
   for (size_t i = 0; i < res.bands.size(); ++i) {
@@ -108,6 +123,7 @@ size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double 
   if (errOut) {
     errOut[0] = res.initialErrorDb;
     errOut[1] = res.finalErrorDb;
+    errOut[2] = res.suggestedLevelTrimDb;
   }
   return res.bands.size();
 }
