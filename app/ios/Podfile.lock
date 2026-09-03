@@ -1,0 +1,21 @@
+PODS:
+  - Flutter (1.0.0)
+  - rewcore_ffi (0.1.0)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - rewcore_ffi (from `.symlinks/plugins/rewcore_ffi/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  rewcore_ffi:
+    :path: ".symlinks/plugins/rewcore_ffi/ios"
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  rewcore_ffi: 9764045aecc5d6ace985dc1a9e5ca8cd7a3c5e89
+
+PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
+
+COCOAPODS: 1.17.0

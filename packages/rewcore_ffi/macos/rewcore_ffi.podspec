@@ -16,8 +16,11 @@ Pod::Spec.new do |s|
   s.author           = { 'rew_mobile' => 'noreply@example.com' }
   s.source           = { :path => '.' }
 
-  s.source_files     = 'core/src/**/*.cpp', 'core/ffi/*.cpp', 'core/ffi/*.h'
-  s.public_header_files = 'core/ffi/*.h'
+  # Per-file symlinks, not a directory symlink: CocoaPods will not glob into a
+  # symlinked directory, and the pod then builds with no sources at all. See the
+  # note in ../ios/rewcore_ffi.podspec.
+  s.source_files     = 'Classes/*.cpp', 'Classes/*.h'
+  s.public_header_files = 'Classes/*.h'
   s.dependency 'FlutterMacOS'
   s.pod_target_xcconfig = {
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
