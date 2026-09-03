@@ -29,10 +29,74 @@ class _WizardScreenState extends State<WizardScreen> {
 
   WizardController get c => widget.controller;
 
+  String? _shownError;
+
+  /// Guards every measurement. Without the UMIK-1 attached Android quietly falls
+  /// back to the phone's own microphone (and, with no car connected, its own
+  /// speaker) and the app would save a confident-looking curve of nothing useful.
+  /// The mic panel already said "No microphone detected", but nothing stopped a
+  /// measurement, so ask outright rather than record a measurement of the phone.
+  Future<void> _measure(Future<void> Function() run) async {
+    await c.refreshMic();
+    if (!mounted) return;
+    if (!(c.mic?.connected ?? false)) {
+      final ok = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('No UMIK-1 detected'),
+              content: const Text(
+                  'Android will fall back to the phone\'s built-in microphone, '
+                  'which is not calibrated and is not where you listen — the '
+                  'result will not be a measurement of your car.\n\n'
+                  'Plug the mic in over USB OTG and tap Refresh, or continue '
+                  'anyway to test the app itself.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Measure anyway')),
+              ],
+            ),
+          ) ??
+          false;
+      if (!ok || !mounted) return;
+    }
+    await run();
+  }
+
   @override
   void initState() {
     super.initState();
     c.refreshMic();
+    c.addListener(_onControllerChanged);
+  }
+
+  @override
+  void dispose() {
+    c.removeListener(_onControllerChanged);
+    super.dispose();
+  }
+
+  /// Failures used to land only in the small status line, which is easy to miss
+  /// while you are sitting in the car looking at the button you just pressed.
+  void _onControllerChanged() {
+    final err = c.lastError;
+    if (err == null) {
+      _shownError = null;
+      return;
+    }
+    if (err == _shownError || !mounted) return;
+    _shownError = err;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(err),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        duration: const Duration(seconds: 8),
+      ));
+    });
   }
 
   @override
@@ -711,10 +775,14 @@ class _WizardScreenState extends State<WizardScreen> {
                   FilledButton.tonalIcon(
                     onPressed: c.busy
                         ? null
-                        : () => c.runCrossoverMeasurement(
-                            c.measuringChannel.id),
-                    icon: const Icon(Icons.graphic_eq, size: 18),
-                    label: const Text('Measure driver'),
+                        : () => _measure(() => c.runCrossoverMeasurement(
+                            c.measuringChannel.id)),
+                    icon: c.busy
+                        ? const SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.graphic_eq, size: 18),
+                    label: Text(c.busy ? 'Measuring…' : 'Measure driver'),
                   ),
                   const SizedBox(width: 12),
                   if (rec != null)
@@ -944,12 +1012,12 @@ class _WizardScreenState extends State<WizardScreen> {
                   style: Theme.of(context).textTheme.titleMedium),
             ),
             FilledButton.icon(
-              onPressed: c.busy ? null : c.runEqMeasurement,
+              onPressed: c.busy ? null : () => _measure(c.runEqMeasurement),
               icon: c.busy
                   ? const SizedBox(
                       width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.graphic_eq),
-              label: const Text('Measure'),
+              label: Text(c.busy ? 'Measuring…' : 'Measure'),
             ),
           ],
         ),
@@ -1052,9 +1120,14 @@ class _WizardScreenState extends State<WizardScreen> {
                   style: Theme.of(context).textTheme.titleMedium),
             ),
             FilledButton.icon(
-              onPressed: c.busy ? null : c.runVerifyMeasurement,
-              icon: const Icon(Icons.check_circle_outline),
-              label: const Text('Measure'),
+              onPressed:
+                  c.busy ? null : () => _measure(c.runVerifyMeasurement),
+              icon: c.busy
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.check_circle_outline),
+              label: Text(c.busy ? 'Measuring…' : 'Measure'),
             ),
           ],
         ),

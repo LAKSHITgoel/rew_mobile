@@ -6,6 +6,7 @@
 // ~500k-point FFTs and takes several seconds on a phone, and Android declares the
 // app "not responding" after about five seconds of a blocked main thread — which
 // is exactly what happened the first time this was used in the car.
+import 'dart:async';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -36,7 +37,11 @@ class MeasurementConfig {
 
 class MeasurementService {
   MeasurementService(this._core, this._audio,
-      {this.config = const MeasurementConfig(), this.libraryPath});
+      {this.config = const MeasurementConfig(),
+      this.libraryPath,
+      Duration? captureTimeout})
+      : captureTimeout = captureTimeout ??
+            Duration(seconds: (config.durationSec + 20).round());
 
   final Rewcore _core;
   final AudioBackend _audio;
@@ -46,6 +51,11 @@ class MeasurementService {
   /// "resolve the usual way", which is what the app does on a device; tests pass
   /// an explicit path because a plain Dart process has no linked-in symbols.
   final String? libraryPath;
+
+  /// How long to wait for the backend to hand back a capture before giving up.
+  /// Unbounded waiting is what left the UI stuck "busy" with a Measure button
+  /// that silently ignored taps.
+  final Duration captureTimeout;
 
   /// UMIK-1 calibration applied to every measurement (null = none loaded).
   MicCalibration? calibration;
@@ -57,14 +67,21 @@ class MeasurementService {
   /// The stimulus for [band]. The swept range is deliberately a little wider than
   /// the analysed range, so the sweep's fade-in/out never lands on a band edge.
   Future<Float64List> sweepFor(SweepBand band) {
+    // On failure the entry is dropped: a cached rejected Future would make every
+    // later measurement fail identically until the app was restarted.
     return _sweeps.putIfAbsent(band.label, () {
       final fs = config.fs;
       final dur = config.durationSec;
       final f1 = (band.fLo / 1.1).clamp(10.0, fs / 2);
       final f2 = (band.fHi * 1.1).clamp(20.0, fs * 0.45);
       final lib = libraryPath;
-      return Isolate.run(() => Rewcore.open(libraryPath: lib)
+      final future = Isolate.run(() => Rewcore.open(libraryPath: lib)
           .generateSweep(fs: fs, f1: f1, f2: f2, durationSec: dur));
+      future.catchError((Object e) {
+        _sweeps.remove(band.label);
+        throw e;
+      });
+      return future;
     });
   }
 
@@ -88,8 +105,19 @@ class MeasurementService {
   /// Run a single capture over [band]: magnitude response plus captured level.
   Future<Measurement> measureOnce({SweepBand band = SweepBand.full}) async {
     final stimulus = await sweepFor(band);
-    final recorded =
-        await _audio.playSweepAndCapture(sweep: stimulus, fs: config.fs);
+
+    // Hard limit on the capture. The native side blocks in AudioRecord.read(),
+    // which never returns if the mic has gone away — and a capture that never
+    // returns leaves the UI stuck "busy" with a dead Measure button, which is
+    // exactly how this failed in the field. Fail loudly instead of hanging.
+    final recorded = await _audio
+        .playSweepAndCapture(sweep: stimulus, fs: config.fs)
+        .timeout(
+      captureTimeout,
+      onTimeout: () => throw TimeoutException(
+          'The microphone did not return any audio. Check it is still plugged '
+          'in, then try again.'),
+    );
 
     // Everything below is seconds of FFT work, so it happens off the main
     // isolate; blocking the UI thread here is what triggers an ANR.

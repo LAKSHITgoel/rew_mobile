@@ -17,6 +17,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.util.Log
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Handler
@@ -27,6 +28,8 @@ import io.flutter.plugin.common.MethodChannel
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
+
+private const val TAG = "RewAudio"
 
 class RewAudioPlugin(private val context: Context) :
     MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
@@ -169,8 +172,15 @@ class RewAudioPlugin(private val context: Context) :
         val captured = FloatArray(captureLen)
         val playBuf = FloatArray(sweep.size) { sweep[it].toFloat() }
 
+        var got = 0
         try {
+            Log.i(TAG, "capture start: fs=$fs frames=$captureLen")
             record.startRecording()
+            if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                throw IllegalStateException(
+                    "microphone did not start recording (is it still plugged in?)"
+                )
+            }
             track.play()
 
             val reader = thread {
@@ -183,6 +193,7 @@ class RewAudioPlugin(private val context: Context) :
                     if (n <= 0) break
                     off += n
                 }
+                got = off
             }
 
             var wrote = 0
@@ -194,7 +205,23 @@ class RewAudioPlugin(private val context: Context) :
                 wrote += n
             }
 
-            reader.join()
+            // read() blocks, and returns nothing at all if the mic disappears
+            // mid-capture. Never wait on it unbounded: a reader thread parked
+            // here used to hang the method call forever, which left the app's
+            // Measure button permanently disabled. Stopping the record unblocks
+            // a parked read().
+            val budgetMs = (captureLen * 1000L) / fs + 5000L
+            reader.join(budgetMs)
+            if (reader.isAlive) {
+                runCatching { record.stop() }
+                reader.join(1000)
+            }
+            Log.i(TAG, "capture done: $got/$captureLen frames")
+            if (got < captureLen / 2) {
+                throw IllegalStateException(
+                    "microphone returned no audio (captured $got of $captureLen frames)"
+                )
+            }
         } finally {
             runCatching { track.stop() }; track.release()
             runCatching { record.stop() }; record.release()

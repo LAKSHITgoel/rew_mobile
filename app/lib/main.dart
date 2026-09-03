@@ -13,10 +13,16 @@ import 'src/services/project_store.dart';
 import 'src/ui/home_screen.dart';
 
 /// Set true to force the hardware-free mock backend (synthesizes a measurement),
-/// e.g. for demos on desktop or an emulator with no mic/car. When false, the app
-/// uses the native audio/USB backend on real devices.
-const bool kUseMockAudio =
-    bool.fromEnvironment('USE_MOCK_AUDIO', defaultValue: kDebugMode);
+/// e.g. for demos on desktop or an emulator with no mic/car:
+///
+///   flutter run --dart-define=USE_MOCK_AUDIO=true
+///
+/// It must default to FALSE in every build, debug included. This once defaulted
+/// to [kDebugMode], which meant a debug build on a real phone quietly fabricated
+/// its measurements: it played no sweep, never opened the mic, and still drew a
+/// plausible curve and recommended EQ. For a measurement tool that is worse than
+/// failing, so the mock is now opt-in only and says so on screen.
+const bool kUseMockAudio = bool.fromEnvironment('USE_MOCK_AUDIO');
 
 void main() {
   runApp(const RewApp());
@@ -40,6 +46,33 @@ class RewApp extends StatelessWidget {
         brightness: Brightness.dark,
       ),
       home: const _Bootstrap(),
+      // A simulated measurement must never be mistakable for a real one.
+      builder: (context, child) {
+        if (!kUseMockAudio) return child ?? const SizedBox.shrink();
+        return Column(children: [
+          const Material(
+            color: Color(0xFFB3261E),
+            child: SafeArea(
+              bottom: false,
+              child: SizedBox(
+                width: double.infinity,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    'SIMULATED AUDIO — no mic, no sweep, numbers are fake',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(child: child ?? const SizedBox.shrink()),
+        ]);
+      },
     );
   }
 }

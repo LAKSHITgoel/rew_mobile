@@ -41,6 +41,9 @@ class WizardController extends ChangeNotifier {
 
   WizardStep step = WizardStep.system;
   bool busy = false;
+
+  /// Set when a run fails, so the UI can show it rather than failing silently.
+  String? lastError;
   String? status;
   MicInfo? mic;
 
@@ -343,11 +346,16 @@ class WizardController extends ChangeNotifier {
 
   Future<void> _run(String msg, Future<void> Function() body) async {
     busy = true;
+    lastError = null;
     status = msg;
     notifyListeners();
     try {
       await body();
-    } catch (e) {
+    } catch (e, st) {
+      // Surface it. A measurement that fails silently is indistinguishable from
+      // a dead button — which is exactly how this presented in the car.
+      debugPrint('[rew] $msg failed: $e\n$st');
+      lastError = '$e';
       status = 'Error: $e';
     } finally {
       busy = false;
