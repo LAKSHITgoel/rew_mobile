@@ -20,8 +20,13 @@ class MainActivity : FlutterActivity() {
      *  once, so this is cleared before every completion path. */
     private var pendingPick: MethodChannel.Result? = null
 
+    /** Pending "save as" — the file to copy out, and who to answer. */
+    private var pendingSaveSource: File? = null
+    private var pendingSaveResult: MethodChannel.Result? = null
+
     companion object {
         private const val REQ_PICK_TEXT = 2001
+        private const val REQ_CREATE_DOC = 2002
         private const val CHANNEL_AUDIO = "rew_mobile/audio"
         private const val CHANNEL_FILES = "rew_mobile/files"
         private const val CHANNEL_LEVELS = "rew_mobile/audio_levels"
@@ -56,6 +61,11 @@ class MainActivity : FlutterActivity() {
                     }
                     "shareFiles" -> shareFiles(call.argument("paths"),
                         call.argument("mime") ?: "*/*", result)
+                    "saveFileAs" -> saveFileAs(
+                        call.argument("path"),
+                        call.argument("name") ?: "measurement",
+                        call.argument("mime") ?: "*/*",
+                        result)
                     else -> result.notImplemented()
                 }
             }
@@ -115,8 +125,54 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /** Opens the system "create document" picker so the user chooses the folder
+     *  and file name, then copies [path] into whatever they picked. */
+    private fun saveFileAs(path: String?, name: String, mime: String,
+                           result: MethodChannel.Result) {
+        if (path == null) {
+            result.error("ARG", "no file to save", null); return
+        }
+        if (pendingSaveResult != null) {
+            result.error("BUSY", "a save is already in progress", null); return
+        }
+        pendingSaveSource = File(path)
+        pendingSaveResult = result
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mime
+            putExtra(Intent.EXTRA_TITLE, name)
+        }
+        try {
+            startActivityForResult(intent, REQ_CREATE_DOC)
+        } catch (e: Exception) {
+            pendingSaveSource = null
+            pendingSaveResult = null
+            result.error("SAVE", e.message, null)
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_CREATE_DOC) {
+            val res = pendingSaveResult ?: return
+            val src = pendingSaveSource
+            pendingSaveResult = null
+            pendingSaveSource = null
+            val dest = data?.data
+            if (resultCode != Activity.RESULT_OK || dest == null || src == null) {
+                res.success(false)  // cancelled
+                return
+            }
+            try {
+                contentResolver.openOutputStream(dest)?.use { out ->
+                    src.inputStream().use { it.copyTo(out) }
+                }
+                res.success(true)
+            } catch (e: Exception) {
+                res.error("SAVE", e.message, null)
+            }
+            return
+        }
         if (requestCode != REQ_PICK_TEXT) return
         val result = pendingPick ?: return
         pendingPick = null

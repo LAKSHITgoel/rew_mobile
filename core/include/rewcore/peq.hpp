@@ -36,6 +36,19 @@ struct PeqConstraints {
   // something that isn't there — it burns amplifier headroom and can wreck drivers.
   // Cuts are always allowed. Set very large to disable the guard.
   double maxBoostBelowPassbandDb = 10.0;
+  // Ignore entirely anything this far below the passband. Such regions are
+  // outside the driver's range (or noise), so there is nothing to correct there
+  // — and, crucially, letting them into the error metric drags the notion of
+  // "flat" far below where the driver actually plays, which makes the fitter
+  // attenuate the whole response instead of levelling it.
+  double fitFloorBelowPassbandDb = 25.0;
+  // Where in the usable band's level distribution the flat target sits, as a
+  // percentile. Low values put the target under most of the response so the fit
+  // comes out mostly CUTS, which is deliberate: peaks are real and cuttable,
+  // whereas dips are usually cancellation nulls that boosting cannot fill — it
+  // only burns headroom. The cost is that the whole response ends up quieter,
+  // which you make back on the DSP's output gain.
+  double targetPercentile = 0.25;
 };
 
 struct PeqFitResult {

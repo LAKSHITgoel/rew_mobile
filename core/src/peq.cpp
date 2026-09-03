@@ -24,6 +24,24 @@ TargetCurve tiltTarget(const FreqResponse& like, double pivotHz,
   return t;
 }
 
+// RMS error counting only points at or above `floorDb` — see
+// PeqConstraints::fitFloorBelowPassbandDb.
+static double rmsErrorAboveFloor(const FreqResponse& response,
+                                 const TargetCurve& target, double fMin,
+                                 double fMax, double floorDb) {
+  double acc = 0.0;
+  std::size_t cnt = 0;
+  for (std::size_t i = 0; i < response.freqHz.size(); ++i) {
+    const double f = response.freqHz[i];
+    if (f < fMin || f > fMax) continue;
+    if (response.magDb[i] < floorDb) continue;
+    const double e = response.magDb[i] - target.magDb[i];
+    acc += e * e;
+    ++cnt;
+  }
+  return cnt ? std::sqrt(acc / cnt) : 0.0;
+}
+
 double rmsErrorDb(const FreqResponse& response, const TargetCurve& target,
                   double fMin, double fMax) {
   double acc = 0.0;
@@ -40,19 +58,71 @@ double rmsErrorDb(const FreqResponse& response, const TargetCurve& target,
 
 namespace {
 
-// Normalize the measured curve so its in-band mean sits on the target's mean; the
-// hardware has a separate output-gain control, so absolute level isn't what EQ fixes.
+// Passband reference: the median of the loudest quarter of the in-band response.
+// Robust to a single narrow peak, and to the deep nulls we must not try to fill.
+double passbandReferenceDb(const FreqResponse& fr, double fLo, double fHi) {
+  std::vector<double> inBand;
+  for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
+    if (fr.freqHz[i] >= fLo && fr.freqHz[i] <= fHi) inBand.push_back(fr.magDb[i]);
+  }
+  if (inBand.empty()) return 0.0;
+  std::sort(inBand.begin(), inBand.end());
+  const std::size_t start = inBand.size() * 3 / 4;
+  double acc = 0.0;
+  std::size_t cnt = 0;
+  for (std::size_t i = start; i < inBand.size(); ++i) {
+    acc += inBand[i];
+    ++cnt;
+  }
+  return cnt ? acc / cnt : inBand.back();
+}
+
+}  // namespace
+
+namespace {
+
+// Normalize the measured curve so its PASSBAND sits on the target; the hardware
+// has a separate output-gain control, so absolute level isn't what EQ fixes.
+//
+// Anchoring to the passband rather than the whole-band mean matters: a real car
+// measurement contains regions tens of dB down (below the driver's range, or
+// just noise). Averaging those in drags the target far below where the driver
+// actually plays, and the fitter then "flattens" by cutting everything down to
+// meet it — attenuating rather than levelling.
 FreqResponse levelAlign(const FreqResponse& measured, const TargetCurve& target,
-                        double fMin, double fMax) {
-  double diff = 0.0;
+                        double fMin, double fMax, double percentile) {
+  double targetSum = 0.0;
   std::size_t cnt = 0;
   for (std::size_t i = 0; i < measured.freqHz.size(); ++i) {
     const double f = measured.freqHz[i];
     if (f < fMin || f > fMax) continue;
-    diff += measured.magDb[i] - target.magDb[i];
+    targetSum += target.magDb[i];
     ++cnt;
   }
-  const double offset = cnt ? diff / cnt : 0.0;
+  const double targetRef = cnt ? targetSum / cnt : 0.0;
+
+  // Anchor to the MEDIAN of the usable band, not its loudest quarter. The top
+  // quartile sits above almost every point, so aligning to it leaves the whole
+  // response looking too quiet and the fitter answers with boosts; the median
+  // centres it, so corrections come out balanced and the overall level barely
+  // moves. (The dead region is excluded first, or it drags the median down.)
+  const double passband = passbandReferenceDb(measured, fMin, fMax);
+  std::vector<double> usable;
+  for (std::size_t i = 0; i < measured.freqHz.size(); ++i) {
+    const double f = measured.freqHz[i];
+    if (f < fMin || f > fMax) continue;
+    if (measured.magDb[i] < passband - 25.0) continue;
+    usable.push_back(measured.magDb[i]);
+  }
+  double centre = passband;
+  if (!usable.empty()) {
+    std::sort(usable.begin(), usable.end());
+    const std::size_t idx = std::min(
+        usable.size() - 1,
+        static_cast<std::size_t>(percentile * (usable.size() - 1)));
+    centre = usable[idx];
+  }
+  const double offset = centre - targetRef;
   FreqResponse out = measured;
   for (double& m : out.magDb) m -= offset;
   return out;
@@ -94,29 +164,6 @@ double estimateQ(const FreqResponse& r, const TargetCurve& t, std::size_t i0,
 
 }  // namespace
 
-namespace {
-
-// Passband reference: the median of the loudest quarter of the in-band response.
-// Robust to a single narrow peak, and to the deep nulls we must not try to fill.
-double passbandReferenceDb(const FreqResponse& fr, double fLo, double fHi) {
-  std::vector<double> inBand;
-  for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
-    if (fr.freqHz[i] >= fLo && fr.freqHz[i] <= fHi) inBand.push_back(fr.magDb[i]);
-  }
-  if (inBand.empty()) return 0.0;
-  std::sort(inBand.begin(), inBand.end());
-  const std::size_t start = inBand.size() * 3 / 4;
-  double acc = 0.0;
-  std::size_t cnt = 0;
-  for (std::size_t i = start; i < inBand.size(); ++i) {
-    acc += inBand[i];
-    ++cnt;
-  }
-  return cnt ? acc / cnt : inBand.back();
-}
-
-}  // namespace
-
 PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
                     const PeqConstraints& c) {
   PeqFitResult result;
@@ -127,13 +174,18 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
   const double fLo = c.fMin * guard;
   const double fHi = c.fMax / guard;
 
-  FreqResponse current = levelAlign(measured, target, fLo, fHi);
-  result.initialErrorDb = rmsErrorDb(current, target, fLo, fHi);
+  FreqResponse current =
+      levelAlign(measured, target, fLo, fHi, c.targetPercentile);
 
-  // Where the driver actually produces output. Below this floor we may cut but
-  // never boost (see PeqConstraints::maxBoostBelowPassbandDb).
+  // Where the driver actually produces output. Below the boost floor we may cut
+  // but never boost; below the fit floor we ignore the region completely,
+  // because trying to "correct" a dead band is what turns EQ into attenuation.
   const double passbandDb = passbandReferenceDb(current, fLo, fHi);
   const double boostFloorDb = passbandDb - c.maxBoostBelowPassbandDb;
+  const double fitFloorDb = passbandDb - c.fitFloorBelowPassbandDb;
+
+  result.initialErrorDb =
+      rmsErrorAboveFloor(current, target, fLo, fHi, fitFloorDb);
 
   std::vector<double> centers;  // placed band centers, for anti-stacking
 
@@ -144,6 +196,8 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
     for (std::size_t i = 0; i < current.freqHz.size(); ++i) {
       const double f = current.freqHz[i];
       if (f < fLo || f > fHi) continue;
+      // Nothing to fix where the driver has essentially no output.
+      if (current.magDb[i] < fitFloorDb) continue;
       // Skip candidates too close to an already-placed band.
       bool tooClose = false;
       for (double cf : centers) {
@@ -178,7 +232,8 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
     }
   }
 
-  result.finalErrorDb = rmsErrorDb(current, target, fLo, fHi);
+  result.finalErrorDb =
+      rmsErrorAboveFloor(current, target, fLo, fHi, fitFloorDb);
   return result;
 }
 

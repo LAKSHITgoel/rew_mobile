@@ -248,8 +248,8 @@ class _WizardScreenState extends State<WizardScreen> {
       DetailedTrace(measured, const Color(0xFF7FB2E5), 'Measured',
           showPhase: measured.hasPhase),
       if (eq != null)
-        DetailedTrace(applyEqPreview(measured, eq.bands, 48000),
-            const Color(0xFF6DD98C), 'Predicted after EQ'),
+        DetailedTrace(applyEqPreview(measured, eq.bands, 48000).predicted,
+            const Color(0xFF6DD98C), 'Predicted after EQ (level-matched)'),
     ];
     final cal = c.hasCalibration ? 'mic-calibrated' : 'no mic calibration';
     final lvl = c.levelLabel('system');
@@ -964,13 +964,25 @@ class _WizardScreenState extends State<WizardScreen> {
           FrChart(curves: [
             FrCurve(measured, Colors.blueGrey, 'Measured'),
             if (eq != null)
-              FrCurve(applyEqPreview(measured, eq.bands, 48000), Colors.green,
-                  'Predicted after EQ'),
+              FrCurve(applyEqPreview(measured, eq.bands, 48000).predicted,
+                  Colors.green, 'Predicted after EQ (level-matched)'),
           ]),
         if (eq != null) ...[
           const SizedBox(height: 12),
           Text('${eq.bands.length} bands recommended',
               style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Builder(builder: (context) {
+            final prev = applyEqPreview(measured!, eq.bands, 48000);
+            final drop = prev.levelChangeDb;
+            return Text(
+              'Flatness ${eq.initialErrorDb.toStringAsFixed(1)} → '
+              '${eq.finalErrorDb.toStringAsFixed(1)} dB RMS'
+              '${drop < -0.5 ? '  ·  costs ${(-drop).toStringAsFixed(1)} dB of '
+                  'output — raise the DSP gain to make it back' : ''}',
+              style: Theme.of(context).textTheme.bodySmall,
+            );
+          }),
           const SizedBox(height: 8),
           for (var i = 0; i < eq.bands.length; i++)
             Text(

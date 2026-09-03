@@ -87,6 +87,75 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
     return file.path;
   }
 
+  /// Save to wherever the user wants, under a name they choose. Distinct from
+  /// sharing: this puts the file in Files/Drive rather than handing it to an app.
+  Future<void> _saveAs({required bool png}) async {
+    final suggested = _sanitise(widget.title);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final ctl = TextEditingController(text: suggested);
+        return AlertDialog(
+          title: Text(png ? 'Save graph as' : 'Save data as'),
+          content: TextField(
+            controller: ctl,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'File name',
+              suffixText: png ? '.png' : '.csv',
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, ctl.text.trim()),
+                child: const Text('Save')),
+          ],
+        );
+      },
+    );
+    if (name == null || name.isEmpty) return;
+
+    setState(() => _busy = true);
+    try {
+      final dir = await NativeFilePicker.exportDirectory();
+      if (dir == null) {
+        _toast('Saving is only available on the device build.');
+        return;
+      }
+      final path = png ? await _writePng(dir) : await _writeCsv(dir);
+      if (path == null) {
+        _toast('Could not render the file.');
+        return;
+      }
+      final saved = await NativeFilePicker.saveFileAs(
+        path,
+        suggestedName: '$name.${png ? 'png' : 'csv'}',
+        mime: png ? 'image/png' : 'text/csv',
+      );
+      _toast(saved ? 'Saved.' : 'Save cancelled.');
+    } on PlatformException catch (e) {
+      _toast('Save failed: ${e.message}');
+    } catch (e) {
+      _toast('Save failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// A file-name-safe version of the measurement title.
+  String _sanitise(String s) {
+    final cleaned = s
+        .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .replaceAll(' ', '_');
+    return cleaned.isEmpty ? 'measurement' : cleaned;
+  }
+
   Future<void> _export({required bool png, required bool csv}) async {
     setState(() => _busy = true);
     try {
@@ -143,22 +212,32 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'Export the graph as an image, or the raw numbers as CSV, to get a '
-            'second opinion on the recommended tuning. The CSV is the exact '
-            'measured data — best when asking an expert or an LLM.',
+            'Save puts the file in Files (you choose the folder and name); Share '
+            'hands it straight to another app. The CSV is the exact measured '
+            'data — the better input when asking an expert or an LLM.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
           Wrap(spacing: 12, runSpacing: 8, children: [
             FilledButton.icon(
-              onPressed: _busy ? null : () => _export(png: true, csv: false),
-              icon: const Icon(Icons.image, size: 18),
-              label: const Text('Share graph (PNG)'),
+              onPressed: _busy ? null : () => _saveAs(png: true),
+              icon: const Icon(Icons.save_alt, size: 18),
+              label: const Text('Save graph (PNG)…'),
             ),
             FilledButton.tonalIcon(
+              onPressed: _busy ? null : () => _saveAs(png: false),
+              icon: const Icon(Icons.save_alt, size: 18),
+              label: const Text('Save data (CSV)…'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : () => _export(png: true, csv: false),
+              icon: const Icon(Icons.image, size: 18),
+              label: const Text('Share graph'),
+            ),
+            OutlinedButton.icon(
               onPressed: _busy ? null : () => _export(png: false, csv: true),
               icon: const Icon(Icons.table_chart, size: 18),
-              label: const Text('Share data (CSV)'),
+              label: const Text('Share data'),
             ),
             OutlinedButton.icon(
               onPressed: _busy ? null : () => _export(png: true, csv: true),

@@ -49,8 +49,12 @@ void main() {
             evalHz: f, f0: 1000, fs: 48000, gainDb: 8, q: 2));
       }
       final measured = FreqResponse(freq, mag);
+      // levelMatch off: this test is about the correction cancelling the bump,
+      // not about how the curve is presented.
       final corrected = applyEqPreview(
-          measured, const [PeqBand(freqHz: 1000, gainDb: -8, q: 2)], 48000);
+              measured, const [PeqBand(freqHz: 1000, gainDb: -8, q: 2)], 48000,
+              levelMatch: false)
+          .predicted;
       // Find the point nearest 1 kHz and check it's ~flat after correction.
       var best = 0;
       for (var i = 1; i < freq.length; i++) {

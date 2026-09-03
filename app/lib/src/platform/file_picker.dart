@@ -26,6 +26,15 @@ class NativeFilePicker {
     }
   }
 
+  /// Opens the system "save as" dialog with [suggestedName] so the user picks
+  /// the folder and file name. Returns false if they cancel.
+  static Future<bool> saveFileAs(String path,
+      {required String suggestedName, String mime = '*/*'}) async {
+    final ok = await _channel.invokeMethod<bool>('saveFileAs',
+        {'path': path, 'name': suggestedName, 'mime': mime});
+    return ok ?? false;
+  }
+
   /// Hands files to the system share sheet.
   static Future<void> shareFiles(List<String> paths, {String mime = '*/*'}) =>
       _channel.invokeMethod<void>('shareFiles', {'paths': paths, 'mime': mime});

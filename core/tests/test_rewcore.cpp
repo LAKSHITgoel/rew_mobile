@@ -559,6 +559,58 @@ static void testCalibrationRealUmikFormat() {
   CHECK_NEAR(cal.gainDb[0], -4.3217, 1e-9);
 }
 
+static void testPeqFlattensDespiteDeadRegion() {
+  std::printf("test: EQ flattens a response that has a dead region\n");
+  // The shape that exposed the bug in the car: a usable passband with ripple,
+  // plus a region tens of dB down below the driver's cutoff. Averaging that in
+  // used to drag the target far below the passband, so the fit "flattened" by
+  // attenuating everything instead of levelling the ripple.
+  const double fs = 48000;
+  FreqResponse fr;
+  const std::size_t pts = 96;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    // Steep roll-off below 120 Hz down to ~-55 dB, plus in-band ripple.
+    const double hp = highpassMagnitude(f, 120.0, Slope::LinkwitzRiley48);
+    double db = 20.0 * std::log10(std::max(hp, 1e-4));
+    db += 5.0 * std::sin(std::log2(f / 100.0) * 2.2);  // ripple to correct
+    fr.freqHz.push_back(f);
+    fr.magDb.push_back(db);
+  }
+
+  PeqConstraints c;
+  c.fs = fs;
+  c.maxBands = 10;
+  const PeqFitResult res = fitPeq(fr, flatTarget(fr), c);
+
+  // Flatness measured over the USABLE band only (the dead region is the
+  // speaker's limit, not something EQ should be judged on).
+  auto usableRipple = [&](const std::vector<PeqBand>& bands) {
+    std::vector<double> v;
+    for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
+      const double y = fr.magDb[i] + cascadeMagnitudeDb(bands, fr.freqHz[i], fs);
+      if (fr.magDb[i] > -25.0) v.push_back(y);  // in the driver's range
+    }
+    double mean = 0;
+    for (double y : v) mean += y;
+    mean /= v.size();
+    double acc = 0;
+    for (double y : v) acc += (y - mean) * (y - mean);
+    return std::sqrt(acc / v.size());
+  };
+
+  const double before = usableRipple({});
+  const double after = usableRipple(res.bands);
+  std::printf("  usable-band ripple %.2f -> %.2f dB with %zu bands\n", before,
+              after, res.bands.size());
+  CHECK(after < before * 0.7);  // genuinely flatter, not merely quieter
+
+  // And nothing should be placed down in the dead region.
+  for (const auto& b : res.bands) CHECK(b.freqHz > 60.0);
+}
+
 static void testPeqDoesNotBoostDeadBand() {
   std::printf("test: PEQ never boosts where the driver has no output\n");
   const double fs = 48000;
@@ -654,6 +706,7 @@ int main() {
   testRmsDbfs();
   testPinkNoise();
   testCalibrationRealUmikFormat();
+  testPeqFlattensDespiteDeadRegion();
   testPeqDoesNotBoostDeadBand();
   testCalibration();
   testWavRoundTrip();
