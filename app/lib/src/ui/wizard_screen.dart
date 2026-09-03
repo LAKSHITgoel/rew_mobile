@@ -1209,6 +1209,10 @@ class _WizardScreenState extends State<WizardScreen> {
                 ?.copyWith(fontStyle: FontStyle.italic),
           ),
           const SizedBox(height: 8),
+          Row(children: [
+            const Expanded(child: Text('Explain in technical terms')),
+            Switch(value: c.expertMode, onChanged: c.setExpertMode),
+          ]),
           // Every band says why it is here and how sure the app is. A bare
           // frequency/gain/Q gives you nothing to decide with.
           for (var i = 0; i < eq.bands.length; i++)
@@ -1218,21 +1222,19 @@ class _WizardScreenState extends State<WizardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '  ${i + 1}.  ${eq.bands[i].freqHz.toStringAsFixed(0)} Hz   '
-                    '${eq.bands[i].gainDb >= 0 ? '+' : ''}${eq.bands[i].gainDb.toStringAsFixed(1)} dB   '
-                    'Q ${eq.bands[i].q.toStringAsFixed(2)}',
-                    style:
-                        const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                    c.expertMode
+                        ? '  ${i + 1}.  ${eq.bands[i].expertLine()}'
+                        : '  ${i + 1}.  ${eq.bands[i].beginnerLine()}',
+                    style: c.expertMode
+                        ? const TextStyle(
+                            fontFamily: 'monospace', fontSize: 13)
+                        : const TextStyle(fontSize: 13),
                   ),
-                  if (eq.bands[i].reason != PeqReason.unknown)
+                  if (!c.expertMode && eq.bands[i].reason != PeqReason.unknown)
                     Padding(
                       padding: const EdgeInsets.only(left: 22, top: 1),
-                      child: Text(
-                        '${eq.bands[i].reason.short} · '
-                        '${eq.bands[i].strength}'
-                        '${eq.bands[i].confidence > 0 ? ' (${(eq.bands[i].confidence * 100).round()}%)' : ''}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                      child: Text(eq.bands[i].reason.explanation,
+                          style: Theme.of(context).textTheme.bodySmall),
                     ),
                 ],
               ),

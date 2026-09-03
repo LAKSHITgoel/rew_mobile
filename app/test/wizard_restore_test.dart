@@ -80,6 +80,21 @@ void main() {
     expect(restored.targetPresetName, 'smooth');
   });
 
+  test('the beginner/expert choice is saved with the tune', () {
+    final project = TuneProject(
+        id: 't5', name: 'expert', createdAt: DateTime(2026, 9, 4))
+      ..expertMode = true;
+    final round = TuneProject.fromJson(project.toJson());
+    expect(round.expertMode, isTrue);
+
+    final c = WizardController(
+      service: MeasurementService(core, MockAudioBackend()),
+      store: MemoryProjectStore(),
+      project: round,
+    );
+    expect(c.expertMode, isTrue);
+  });
+
   test('a tune with nothing measured yet stays empty', () {
     final c = WizardController(
       service: MeasurementService(core, MockAudioBackend()),

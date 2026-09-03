@@ -80,6 +80,9 @@ class TuneProject {
   /// silently reverting to a different target would change every
   /// recommendation.
   String targetPresetName = 'smooth';
+
+  /// Whether recommendations are worded for an expert or a beginner.
+  bool expertMode = false;
   TargetShape customTarget = TargetPreset.custom.shape;
 
   Map<String, dynamic> toJson() => {
@@ -95,6 +98,7 @@ class TuneProject {
         'levelsDbfs': levelsDbfs,
         'splOffsetDb': splOffsetDb,
         'targetPreset': targetPresetName,
+        'expertMode': expertMode,
         'customTarget': customTarget.toJson(),
         'setup': setup.toJson(),
       };
@@ -122,6 +126,7 @@ class TuneProject {
             (j['setup'] as Map<String, dynamic>?) ?? const {}),
       )
         ..targetPresetName = (j['targetPreset'] as String?) ?? 'smooth'
+        ..expertMode = (j['expertMode'] as bool?) ?? false
         ..customTarget = j['customTarget'] == null
             ? TargetPreset.custom.shape
             : TargetShape.fromJson(j['customTarget'] as Map<String, dynamic>);

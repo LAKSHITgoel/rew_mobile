@@ -349,6 +349,43 @@ class PeqBand {
   final PeqReason reason;
   final double confidence;
 
+  /// The recommendation in plain language, for someone who does not read
+  /// frequency response plots. Same finding as [expertLine], said differently —
+  /// the app should never have a finding it can only express one way.
+  String beginnerLine() {
+    final where = freqHz < 250
+        ? 'the bass'
+        : freqHz < 800
+            ? 'the lower midrange'
+            : freqHz < 2500
+                ? 'the midrange, where voices sit'
+                : freqHz < 7000
+                    ? 'the presence range, where sibilance and detail sit'
+                    : 'the top end';
+    final action = gainDb < 0
+        ? 'has too much energy'
+        : 'is a little weak';
+    final size = gainDb.abs() >= 4
+        ? 'clearly'
+        : gainDb.abs() >= 2
+            ? 'noticeably'
+            : 'slightly';
+    final fix = gainDb < 0
+        ? 'Cut it by ${(-gainDb).toStringAsFixed(1)} dB.'
+        : 'Lift it by ${gainDb.toStringAsFixed(1)} dB.';
+    return '${_hz(freqHz)} — $where $size $action. $fix';
+  }
+
+  /// The same finding for someone who wants the numbers.
+  String expertLine() =>
+      '${_hz(freqHz)}  ${gainDb >= 0 ? '+' : ''}${gainDb.toStringAsFixed(1)} dB  '
+      'Q ${q.toStringAsFixed(2)}  ·  ${reason.short}  ·  $strength'
+      '${confidence > 0 ? ' (${(confidence * 100).round()}%)' : ''}';
+
+  static String _hz(double f) => f >= 1000
+      ? '${(f / 1000).toStringAsFixed(f >= 10000 ? 0 : 1)} kHz'
+      : '${f.round()} Hz';
+
   /// How the app frames the recommendation: high confidence is worth doing,
   /// low confidence is worth trying and listening to.
   String get strength => confidence >= 0.6

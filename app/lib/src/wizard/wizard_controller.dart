@@ -50,6 +50,7 @@ class WizardController extends ChangeNotifier {
       orElse: () => TargetPreset.smooth,
     );
     customTarget = project.customTarget;
+    expertMode = project.expertMode;
 
     final bands = project.eqBands['system'];
     if (bands != null && bands.isNotEmpty) {
@@ -76,6 +77,17 @@ class WizardController extends ChangeNotifier {
   /// Deepest cut any single EQ band may use. Matches what is worth typing into
   /// the DSP: past this you turn the channel down instead.
   double maxCutDb = 6.0;
+
+  /// Whether the app explains itself in plain language or in numbers. Same
+  /// findings either way — the mode changes the wording, never the advice.
+  bool expertMode = false;
+
+  void setExpertMode(bool on) {
+    expertMode = on;
+    project.expertMode = on;
+    unawaited(store.save(project));
+    notifyListeners();
+  }
 
   /// What the system is being aimed at. Preference, not physics — so it is the
   /// listener's choice, and the app never assumes flat is the goal.

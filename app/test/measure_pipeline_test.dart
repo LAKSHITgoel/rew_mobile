@@ -419,6 +419,39 @@ void main() {
     expect(m.quality!.usable, isTrue);
     expect(m.quality!.problem, isNull);
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('the same finding can be said two ways, and both name the same fix', () {
+    const cut = PeqBand(
+        freqHz: 3200,
+        gainDb: -2.8,
+        q: 1.4,
+        reason: PeqReason.broadExcess,
+        confidence: 0.91);
+
+    final expert = cut.expertLine();
+    expect(expert, contains('3.2 kHz'));
+    expect(expert, contains('-2.8'));
+    expect(expert, contains('Q 1.40'));
+    expect(expert, contains('broad repeatable excess'));
+    expect(expert, contains('91%'));
+
+    final plain = cut.beginnerLine();
+    expect(plain, contains('3.2 kHz'));
+    expect(plain, contains('presence'));
+    expect(plain, contains('too much energy'));
+    expect(plain, contains('Cut it by 2.8 dB'));
+    // The plain wording must not leak jargon it does not explain.
+    expect(plain.contains('Q '), isFalse);
+
+    const boost = PeqBand(
+        freqHz: 80,
+        gainDb: 3,
+        q: 1,
+        reason: PeqReason.broadDeficit,
+        confidence: 0.7);
+    expect(boost.beginnerLine(), contains('bass'));
+    expect(boost.beginnerLine(), contains('Lift it by 3.0 dB'));
+  });
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.
