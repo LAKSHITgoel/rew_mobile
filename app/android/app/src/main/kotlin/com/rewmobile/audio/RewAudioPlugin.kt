@@ -131,7 +131,22 @@ class RewAudioPlugin(private val context: Context) :
                     )
                     .setBufferSizeInBytes(bufBytes)
                     .build()
-                if (r.state == AudioRecord.STATE_INITIALIZED) return r
+                if (r.state == AudioRecord.STATE_INITIALIZED) {
+                    // Asking for a rate is not being given it. If the device
+                    // opened at a different one, the recording is on another
+                    // time base than the sweep and every frequency in the
+                    // result is wrong by that ratio — a silent, plausible
+                    // error. iOS already refuses this; Android must too.
+                    if (r.sampleRate != fs) {
+                        val got = r.sampleRate
+                        r.release()
+                        throw IllegalStateException(
+                            "microphone opened at $got Hz, not the $fs Hz the " +
+                                "sweep was generated for"
+                        )
+                    }
+                    return r
+                }
                 r.release()
             } catch (e: Exception) {
                 last = e
