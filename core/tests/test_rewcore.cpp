@@ -427,6 +427,17 @@ static void testConfidenceAndRepeatability() {
   const PeqFitResult b = fitPeq(fr, flatTarget(fr), c, loose);
   CHECK(!a.rationale.empty() && !b.rationale.empty());
   CHECK(a.rationale[0].confidence > b.rationale[0].confidence);
+
+  // The score has to span a usable range, not just order things. A broad,
+  // deep, repeatable peak in the middle of the band is the textbook case for
+  // EQ and must read as such — an earlier version multiplied its four terms
+  // together and scored every band on a real car measurement under 20%, which
+  // told the user nothing.
+  CHECK(a.rationale[0].confidence > 0.7);
+  // And a sloppily repeated version of the same peak should be middling, not
+  // annihilated.
+  CHECK(b.rationale[0].confidence > 0.25);
+  CHECK(b.rationale[0].confidence < 0.7);
 }
 
 static void testResponseSpread() {
@@ -444,6 +455,44 @@ static void testResponseSpread() {
   CHECK(s.magDb[5] > 3.0);    // and disagreed here
   // A single capture cannot say anything about repeatability.
   CHECK(responseSpread({a}).magDb[5] < 1e-9);
+}
+
+static void testPeqNeverMakesItWorse() {
+  std::printf("test: EQ never increases the error, even on a rolled-off driver\n");
+  const double fs = 48000.0;
+  const int n = 240;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+
+  // The case that caught this in the car: a driver with no low end. The fitter
+  // saw a "broad dip" below 100 Hz and boosted into a region that is simply
+  // absent, which measurably worsened the response.
+  FreqResponse rolled;
+  for (int i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / (n - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    rolled.freqHz.push_back(f);
+    const double octavesBelow = std::log2(120.0 / f);
+    rolled.magDb.push_back(f < 120.0 ? -12.0 * octavesBelow : 0.0);
+  }
+
+  PeqConstraints c;
+  c.fs = fs;
+  c.maxBands = 8;
+  const PeqFitResult r = fitPeq(rolled, flatTarget(rolled), c);
+  CHECK(r.finalErrorDb <= r.initialErrorDb + 1e-9);
+
+  // And on an ordinary bumpy response it must still actually help.
+  std::vector<PeqBand> bumps = {{90.0, 7.0, 1.0}, {3000.0, -5.0, 1.5}};
+  FreqResponse bumpy;
+  for (int i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / (n - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    bumpy.freqHz.push_back(f);
+    bumpy.magDb.push_back(cascadeMagnitudeDb(bumps, f, fs));
+  }
+  const PeqFitResult good = fitPeq(bumpy, flatTarget(bumpy), c);
+  CHECK(!good.bands.empty());
+  CHECK(good.finalErrorDb < good.initialErrorDb);
 }
 
 static void testPeqReportsLevelTrim() {
@@ -819,6 +868,7 @@ int main() {
   testFfiCalibration();
   testFfiPeqErrorOut();
   testPeqReportsLevelTrim();
+  testPeqNeverMakesItWorse();
   testConfidenceAndRepeatability();
   testResponseSpread();
   testPhaseUnwrap();

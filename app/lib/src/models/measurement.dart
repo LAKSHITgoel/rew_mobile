@@ -111,6 +111,7 @@ enum PeqReason {
   declinedNarrowNull(10),
   declinedNoOutput(11),
   declinedUnrepeatable(12),
+  declinedNoImprovement(13),
   unknown(0);
 
   const PeqReason(this.code);
@@ -125,6 +126,7 @@ enum PeqReason {
         PeqReason.declinedNarrowNull => 'likely acoustic cancellation',
         PeqReason.declinedNoOutput => 'driver does not play here',
         PeqReason.declinedUnrepeatable => 'moved between captures',
+        PeqReason.declinedNoImprovement => 'correcting it made things worse',
         PeqReason.unknown => 'unclassified',
       };
 
@@ -154,6 +156,11 @@ enum PeqReason {
           'This moved between repeated captures, so it is not a property of '
               'the car — more likely mic position or background noise. '
               'Re-measure before treating it as real.',
+        PeqReason.declinedNoImprovement =>
+          'A filter here was tried and measurably worsened the response, so it '
+              'was dropped. Usually this means the region is outside what the '
+              'driver can play, and it wants a crossover or level change '
+              'rather than EQ.',
         PeqReason.unknown => '',
       };
 }

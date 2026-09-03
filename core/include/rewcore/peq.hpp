@@ -89,6 +89,7 @@ enum class PeqReason : int {
   declinedNarrowNull = 10,    // cancellation: boosting cannot fill it
   declinedNoOutput = 11,      // driver does not play there
   declinedUnrepeatable = 12,  // moved between captures — not a property of the car
+  declinedNoImprovement = 13, // applying it measurably made the response worse
 };
 
 struct PeqBandRationale {

@@ -188,7 +188,23 @@ static double bandConfidence(double q, double devDb, double spreadDb,
   const double octFromHi = std::log2(fHi / f);
   const double edge =
       std::clamp(std::min(octFromLo, octFromHi) / 0.33, 0.3, 1.0);
-  return std::clamp(width * depth * repeat * edge, 0.0, 1.0);
+
+  // Weighted geometric mean, NOT a product. Multiplying four independent 0..1
+  // terms collapses: a merely-average score on each gives 0.2*0.5*0.5*1 = 5%,
+  // and on a real car measurement every band came back "low confidence", which
+  // makes the score useless as a way to tell recommendations apart. A geometric
+  // mean keeps the same ordering while spanning a usable range, and lets one
+  // weak term pull the score down without annihilating it.
+  //
+  // Repeatability carries the most weight because it is the only term measured
+  // rather than inferred; the edge term is a mild correction, not a verdict.
+  constexpr double wRepeat = 0.40;
+  constexpr double wWidth = 0.30;
+  constexpr double wDepth = 0.20;
+  constexpr double wEdge = 0.10;
+  const double logScore = wRepeat * std::log(repeat) + wWidth * std::log(width) +
+                          wDepth * std::log(depth) + wEdge * std::log(edge);
+  return std::clamp(std::exp(logScore), 0.0, 1.0);
 }
 
 PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
@@ -310,14 +326,30 @@ PeqFitResult fitPeq(const FreqResponse& measured, const TargetCurve& target,
       reason = PeqReason::cutLimited;
     }
 
+    // Verify before keeping it. A filter that does not reduce the error is not
+    // a correction, and on a real measurement the fitter was capable of handing
+    // back EQ that made the response measurably worse (5.1 -> 5.3 dB RMS on a
+    // rolled-off driver, where it was "lifting" a band that is simply not
+    // there). Never ship a band that loses.
+    const double before =
+        rmsErrorAboveFloor(current, target, fLo, fHi, fitFloorDb);
+    FreqResponse candidate = current;
+    const Biquad filter = makePeaking(f0, c.fs, gain, q);
+    for (std::size_t i = 0; i < candidate.freqHz.size(); ++i) {
+      candidate.magDb[i] += filter.magnitudeDb(candidate.freqHz[i], c.fs);
+    }
+    const double after =
+        rmsErrorAboveFloor(candidate, target, fLo, fHi, fitFloorDb);
+    if (after >= before - 1e-9) {
+      rejected.push_back(f0);
+      result.declined.push_back({PeqReason::declinedNoImprovement, conf, f0});
+      continue;
+    }
+
     result.bands.push_back({f0, gain, q});
     result.rationale.push_back({reason, conf, f0});
     centers.push_back(f0);
-
-    for (std::size_t i = 0; i < current.freqHz.size(); ++i) {
-      current.magDb[i] += makePeaking(f0, c.fs, gain, q).magnitudeDb(
-          current.freqHz[i], c.fs);
-    }
+    current = candidate;
   }
 
   result.finalErrorDb =
