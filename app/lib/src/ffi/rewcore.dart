@@ -243,6 +243,47 @@ class Rewcore {
       _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>() &&
       _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>();
 
+  /// Asserts the Dart mirror of `rew_rta_config` agrees with the C struct.
+  bool rtaConfigLayoutMatches() =>
+      _b.rewRtaConfigSize() == ffi.sizeOf<RewRtaConfig>();
+
+  /// Opens a real-time analyser. The caller owns it and must [RtaSession.close]
+  /// it — it holds native memory for as long as it lives.
+  RtaSession openRta({
+    double fs = 48000,
+    int fftSize = 16384,
+    double overlap = 0.5,
+    double averaging = 0.2,
+    double smoothFrac = 6,
+    bool pinkWeighted = true,
+    double fMin = 20,
+    double fMax = 20000,
+    int points = 0,
+  }) {
+    final cfg = calloc<RewRtaConfig>();
+    try {
+      cfg.ref
+        ..fs = fs
+        ..overlap = overlap
+        ..averaging = averaging
+        // The C side reads <0 as "no smoothing" and 0 as "use the default",
+        // since 0 cannot mean both.
+        ..smoothFrac = smoothFrac <= 0 ? -1 : smoothFrac
+        ..fMin = fMin
+        ..fMax = fMax
+        ..fftSize = fftSize
+        ..points = points
+        ..pinkWeighted = pinkWeighted ? 1 : 0;
+      final handle = _b.rewRtaCreate(cfg);
+      if (handle == ffi.nullptr) {
+        throw StateError('could not create the analyser');
+      }
+      return RtaSession._(_b, handle, fftSize ~/ 2);
+    } finally {
+      calloc.free(cfg);
+    }
+  }
+
   /// Check a raw capture before anything is inferred from it.
   CaptureQuality assessCapture(Float64List samples, double fs) {
     if (samples.isEmpty) {
@@ -438,5 +479,67 @@ class Rewcore {
       if (validPtr != ffi.nullptr) calloc.free(validPtr);
       if (spreadPtr != ffi.nullptr) calloc.free(spreadPtr);
     }
+  }
+}
+
+/// A live analyser. Push audio as it arrives; read the spectrum when you draw.
+///
+/// Holds native memory, so it must be closed. Reading is deliberately separate
+/// from pushing: audio arrives far faster than a screen refreshes, and folding
+/// every block into the average is cheap while building a curve is not.
+class RtaSession {
+  RtaSession._(this._b, this._handle, this._maxPoints)
+      : _freqOut = calloc<ffi.Double>(_maxPoints),
+        _magOut = calloc<ffi.Double>(_maxPoints);
+
+  final RewcoreBindings _b;
+  ffi.Pointer<ffi.Void> _handle;
+  final int _maxPoints;
+  final ffi.Pointer<ffi.Double> _freqOut;
+  final ffi.Pointer<ffi.Double> _magOut;
+  ffi.Pointer<ffi.Double> _in = ffi.nullptr;
+  int _inCap = 0;
+
+  bool get isOpen => _handle != ffi.nullptr;
+
+  /// Returns how many new spectra were folded in.
+  int push(Float64List samples) {
+    if (!isOpen || samples.isEmpty) return 0;
+    if (_inCap < samples.length) {
+      if (_in != ffi.nullptr) calloc.free(_in);
+      _in = calloc<ffi.Double>(samples.length);
+      _inCap = samples.length;
+    }
+    _in.asTypedList(samples.length).setAll(0, samples);
+    return _b.rewRtaPush(_handle, _in, samples.length);
+  }
+
+  FreqResponse _read(RewRtaReadDart fn) {
+    if (!isOpen) return FreqResponse(const [], const []);
+    final n = fn(_handle, _freqOut, _magOut, _maxPoints);
+    if (n == 0) return FreqResponse(const [], const []);
+    return FreqResponse(
+      List<double>.from(_freqOut.asTypedList(n)),
+      List<double>.from(_magOut.asTypedList(n)),
+    );
+  }
+
+  FreqResponse spectrum() => _read(_b.rewRtaSpectrum);
+  FreqResponse peakHold() => _read(_b.rewRtaPeakHold);
+
+  double get levelDbfs => isOpen ? _b.rewRtaLevelDbfs(_handle) : -240;
+
+  void reset({bool averaging = true, bool peakHold = true}) {
+    if (!isOpen) return;
+    _b.rewRtaReset(_handle, averaging ? 1 : 0, peakHold ? 1 : 0);
+  }
+
+  void close() {
+    if (!isOpen) return;
+    _b.rewRtaDestroy(_handle);
+    _handle = ffi.nullptr;
+    calloc.free(_freqOut);
+    calloc.free(_magOut);
+    if (_in != ffi.nullptr) calloc.free(_in);
   }
 }

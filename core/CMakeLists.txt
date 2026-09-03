@@ -8,6 +8,7 @@ add_library(rewcore
   src/biquad.cpp
   src/dsp.cpp
   src/peq.cpp
+  src/rta.cpp
   src/crossover.cpp
   src/calibration.cpp
   src/wav.cpp

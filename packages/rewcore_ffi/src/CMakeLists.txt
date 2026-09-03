@@ -15,6 +15,7 @@ add_library(rewcore_ffi SHARED
   ${CORE}/src/biquad.cpp
   ${CORE}/src/dsp.cpp
   ${CORE}/src/peq.cpp
+  ${CORE}/src/rta.cpp
   ${CORE}/src/crossover.cpp
   ${CORE}/src/calibration.cpp
   ${CORE}/src/wav.cpp

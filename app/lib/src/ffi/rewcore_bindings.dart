@@ -162,6 +162,58 @@ final class RewPeqRequest extends ffi.Struct {
   external ffi.Pointer<ffi.Double> errOut;
 }
 
+/// Mirrors `rew_rta_config` in core/ffi/rewcore_ffi.h.
+final class RewRtaConfig extends ffi.Struct {
+  @ffi.Double()
+  external double fs;
+  @ffi.Double()
+  external double overlap;
+  @ffi.Double()
+  external double averaging;
+  @ffi.Double()
+  external double smoothFrac;
+  @ffi.Double()
+  external double fMin;
+  @ffi.Double()
+  external double fMax;
+  @ffi.Size()
+  external int fftSize;
+  @ffi.Size()
+  external int points;
+  @ffi.Int()
+  external int pinkWeighted;
+  @ffi.Int()
+  external int reserved;
+}
+
+typedef _RewRtaCreateC = ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<RewRtaConfig>);
+typedef RewRtaCreateDart = ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<RewRtaConfig>);
+
+typedef _RewRtaDestroyC = ffi.Void Function(ffi.Pointer<ffi.Void>);
+typedef RewRtaDestroyDart = void Function(ffi.Pointer<ffi.Void>);
+
+typedef _RewRtaPushC = ffi.Size Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Double>, ffi.Size);
+typedef RewRtaPushDart = int Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Double>, int);
+
+typedef _RewRtaReadC = ffi.Size Function(ffi.Pointer<ffi.Void>,
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size);
+typedef RewRtaReadDart = int Function(ffi.Pointer<ffi.Void>,
+    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int);
+
+typedef _RewRtaLevelC = ffi.Double Function(ffi.Pointer<ffi.Void>);
+typedef RewRtaLevelDart = double Function(ffi.Pointer<ffi.Void>);
+
+typedef _RewRtaResetC = ffi.Void Function(
+    ffi.Pointer<ffi.Void>, ffi.Int, ffi.Int);
+typedef RewRtaResetDart = void Function(ffi.Pointer<ffi.Void>, int, int);
+
+typedef _RewRtaConfigSizeC = ffi.Size Function();
+typedef RewRtaConfigSizeDart = int Function();
+
 // size_t rew_peq_request_size(void);
 typedef _RewPeqRequestSizeC = ffi.Size Function();
 typedef RewPeqRequestSizeDart = int Function();
@@ -206,6 +258,22 @@ class RewcoreBindings {
                 'rew_generate_noise'),
         rewMeasureFr = lib
             .lookupFunction<_RewMeasureFrC, RewMeasureFrDart>('rew_measure_fr'),
+        rewRtaCreate =
+            lib.lookupFunction<_RewRtaCreateC, RewRtaCreateDart>('rew_rta_create'),
+        rewRtaDestroy = lib
+            .lookupFunction<_RewRtaDestroyC, RewRtaDestroyDart>('rew_rta_destroy'),
+        rewRtaPush =
+            lib.lookupFunction<_RewRtaPushC, RewRtaPushDart>('rew_rta_push'),
+        rewRtaSpectrum =
+            lib.lookupFunction<_RewRtaReadC, RewRtaReadDart>('rew_rta_spectrum'),
+        rewRtaPeakHold =
+            lib.lookupFunction<_RewRtaReadC, RewRtaReadDart>('rew_rta_peak_hold'),
+        rewRtaLevelDbfs = lib
+            .lookupFunction<_RewRtaLevelC, RewRtaLevelDart>('rew_rta_level_dbfs'),
+        rewRtaReset =
+            lib.lookupFunction<_RewRtaResetC, RewRtaResetDart>('rew_rta_reset'),
+        rewRtaConfigSize = lib.lookupFunction<_RewRtaConfigSizeC,
+            RewRtaConfigSizeDart>('rew_rta_config_size'),
         rewCrossoverResultSize = lib.lookupFunction<_RewCrossoverResultSizeC,
             RewCrossoverResultSizeDart>('rew_crossover_result_size'),
         rewMeasureRequestSize = lib.lookupFunction<_RewMeasureRequestSizeC,
@@ -237,6 +305,14 @@ class RewcoreBindings {
   final RewAssessCaptureDart rewAssessCapture;
   final RewRecommendCrossoverDart rewRecommendCrossover;
   final RewCrossoverResultSizeDart rewCrossoverResultSize;
+  final RewRtaCreateDart rewRtaCreate;
+  final RewRtaDestroyDart rewRtaDestroy;
+  final RewRtaPushDart rewRtaPush;
+  final RewRtaReadDart rewRtaSpectrum;
+  final RewRtaReadDart rewRtaPeakHold;
+  final RewRtaLevelDart rewRtaLevelDbfs;
+  final RewRtaResetDart rewRtaReset;
+  final RewRtaConfigSizeDart rewRtaConfigSize;
 
   /// Opens the rewcore native library for the current platform. The library name
   /// matches the `rewcore_ffi` plugin (see packages/rewcore_ffi).

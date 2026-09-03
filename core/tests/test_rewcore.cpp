@@ -11,6 +11,7 @@
 #include "rewcore/dsp.hpp"
 #include "rewcore/fft.hpp"
 #include "rewcore/peq.hpp"
+#include "rewcore/rta.hpp"
 #include "rewcore/wav.hpp"
 #include "rewcore_ffi.h"
 
@@ -500,6 +501,95 @@ static void testConfidenceAndRepeatability() {
   // annihilated.
   CHECK(b.rationale[0].confidence > 0.25);
   CHECK(b.rationale[0].confidence < 0.7);
+}
+
+static void testRtaLevels() {
+  std::printf("test: RTA reports the right level at the right frequency\n");
+  RtaConfig cfg;
+  cfg.fs = 48000.0;
+  cfg.fftSize = 8192;
+  cfg.averaging = 1.0;      // no time smoothing, so one block is deterministic
+  cfg.smoothFrac = 0.0;     // raw bins, so the peak is not spread by smoothing
+  cfg.pinkWeighted = false; // absolute levels
+  RtaAnalyzer rta(cfg);
+
+  // A 1 kHz sine at -20 dBFS amplitude. An RTA that cannot put a known tone at
+  // the right frequency and the right level is not measuring anything.
+  const double amp = 0.1;  // -20 dBFS
+  std::vector<double> x(cfg.fftSize * 2);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    x[i] = amp * std::sin(2.0 * M_PI * 1000.0 * i / cfg.fs);
+  }
+  CHECK(rta.push(x.data(), x.size()) > 0);
+  CHECK(rta.hasSpectrum());
+
+  const FreqResponse fr = rta.spectrum();
+  CHECK(!fr.freqHz.empty());
+  std::size_t peak = 0;
+  for (std::size_t i = 1; i < fr.magDb.size(); ++i) {
+    if (fr.magDb[i] > fr.magDb[peak]) peak = i;
+  }
+  std::printf("  peak at %.0f Hz, %.1f dB\n", fr.freqHz[peak], fr.magDb[peak]);
+  CHECK(std::fabs(fr.freqHz[peak] - 1000.0) < 20.0);
+  // Window correction must be applied, or every level reads low by a fixed
+  // amount — which matters the moment the mic is calibrated and this is SPL.
+  CHECK_NEAR(fr.magDb[peak], 20.0 * std::log10(amp), 1.0);
+
+  // Broadband level of a sine is its amplitude / sqrt(2).
+  CHECK_NEAR(rta.levelDbfs(), 20.0 * std::log10(amp / std::sqrt(2.0)), 0.5);
+}
+
+static void testRtaPinkWeightingAndPeakHold() {
+  std::printf("test: pink weighting flattens pink noise; peak hold catches a burst\n");
+  RtaConfig cfg;
+  cfg.fs = 48000.0;
+  cfg.fftSize = 8192;
+  cfg.averaging = 0.3;
+  cfg.smoothFrac = 3.0;   // broad bands, to see the trend rather than the noise
+  cfg.pinkWeighted = true;
+  RtaAnalyzer rta(cfg);
+
+  NoiseSpec ns;
+  ns.fs = cfg.fs;
+  ns.durationSec = 3.0;
+  ns.fLo = 100.0;
+  ns.fHi = 10000.0;
+  ns.amplitude = 0.2;
+  const std::vector<double> pink = generatePinkNoise(ns);
+  rta.push(pink.data(), pink.size());
+  CHECK(rta.hasSpectrum());
+
+  // With pink weighting on, pink noise should read roughly level across the
+  // band it occupies rather than sloping down 3 dB per octave. Compare an
+  // octave apart, well inside the noise's own range.
+  const FreqResponse fr = rta.spectrum();
+  auto levelAt = [&](double f) {
+    std::size_t best = 0;
+    double err = 1e18;
+    for (std::size_t i = 0; i < fr.freqHz.size(); ++i) {
+      const double e = std::fabs(std::log2(fr.freqHz[i] / f));
+      if (e < err) { err = e; best = i; }
+    }
+    return fr.magDb[best];
+  };
+  const double a = levelAt(500.0), b = levelAt(2000.0);
+  std::printf("  pink at 500 Hz %.1f dB, at 2 kHz %.1f dB\n", a, b);
+  // Two octaves apart would be 6 dB of slope if the weighting did nothing.
+  CHECK(std::fabs(a - b) < 4.0);
+
+  // Peak hold must sit at or above the average everywhere: it is the record of
+  // what happened, which an average by design smooths away.
+  const FreqResponse pk = rta.peakHold();
+  CHECK(pk.magDb.size() == fr.magDb.size());
+  bool everywhereAtLeast = true;
+  for (std::size_t i = 0; i < pk.magDb.size(); ++i) {
+    if (pk.magDb[i] < fr.magDb[i] - 1e-6) everywhereAtLeast = false;
+  }
+  CHECK(everywhereAtLeast);
+
+  rta.resetPeakHold();
+  rta.resetAveraging();
+  CHECK(!rta.hasSpectrum());
 }
 
 static void testCaptureQuality() {
@@ -1042,6 +1132,8 @@ int main() {
   testConfidenceAndRepeatability();
   testResponseSpread();
   testCaptureQuality();
+  testRtaLevels();
+  testRtaPinkWeightingAndPeakHold();
   testPhaseUnwrap();
   testPhaseOfPureDelay();
   testTimeReferencedPhase();

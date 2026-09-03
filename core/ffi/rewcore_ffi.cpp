@@ -7,6 +7,7 @@
 #include "rewcore/crossover.hpp"
 #include "rewcore/dsp.hpp"
 #include "rewcore/peq.hpp"
+#include "rewcore/rta.hpp"
 
 using namespace rewcore;
 
@@ -250,3 +251,72 @@ int rew_recommend_crossover(const double* freq, const double* mag, size_t n,
 }
 
 }  // extern "C"
+
+// --- Real-time analyser -----------------------------------------------------
+
+struct rew_rta {
+  explicit rew_rta(const RtaConfig& c) : impl(c) {}
+  RtaAnalyzer impl;
+};
+
+size_t rew_rta_config_size(void) { return sizeof(rew_rta_config); }
+
+rew_rta* rew_rta_create(const rew_rta_config* cfg) {
+  RtaConfig c;
+  if (cfg) {
+    if (cfg->fs > 0.0) c.fs = cfg->fs;
+    if (cfg->fftSize > 0) c.fftSize = cfg->fftSize;
+    if (cfg->overlap > 0.0) c.overlap = cfg->overlap;
+    if (cfg->averaging > 0.0) c.averaging = cfg->averaging;
+    if (cfg->smoothFrac < 0.0) {
+      c.smoothFrac = 0.0;
+    } else if (cfg->smoothFrac > 0.0) {
+      c.smoothFrac = cfg->smoothFrac;
+    }
+    if (cfg->fMin > 0.0) c.fMin = cfg->fMin;
+    if (cfg->fMax > 0.0) c.fMax = cfg->fMax;
+    c.points = cfg->points;
+    c.pinkWeighted = cfg->pinkWeighted != 0;
+  }
+  return new rew_rta(c);
+}
+
+void rew_rta_destroy(rew_rta* rta) { delete rta; }
+
+size_t rew_rta_push(rew_rta* rta, const double* samples, size_t n) {
+  if (!rta || !samples) return 0;
+  return rta->impl.push(samples, n);
+}
+
+static size_t copyOut(const FreqResponse& fr, double* freqOut, double* magOut,
+                      size_t cap) {
+  if (!freqOut || !magOut) return 0;
+  const size_t n = std::min(cap, fr.freqHz.size());
+  for (size_t i = 0; i < n; ++i) {
+    freqOut[i] = fr.freqHz[i];
+    magOut[i] = fr.magDb[i];
+  }
+  return n;
+}
+
+size_t rew_rta_spectrum(rew_rta* rta, double* freqOut, double* magOut,
+                        size_t cap) {
+  if (!rta || !rta->impl.hasSpectrum()) return 0;
+  return copyOut(rta->impl.spectrum(), freqOut, magOut, cap);
+}
+
+size_t rew_rta_peak_hold(rew_rta* rta, double* freqOut, double* magOut,
+                         size_t cap) {
+  if (!rta || !rta->impl.hasSpectrum()) return 0;
+  return copyOut(rta->impl.peakHold(), freqOut, magOut, cap);
+}
+
+double rew_rta_level_dbfs(rew_rta* rta) {
+  return rta ? rta->impl.levelDbfs() : -240.0;
+}
+
+void rew_rta_reset(rew_rta* rta, int averaging, int peakHold) {
+  if (!rta) return;
+  if (averaging) rta->impl.resetAveraging();
+  if (peakHold) rta->impl.resetPeakHold();
+}

@@ -208,6 +208,47 @@ REW_EXPORT int rew_recommend_crossover(const double* freq, const double* mag,
 // sizeof(rew_crossover_result), for the same layout assertion as the others.
 REW_EXPORT size_t rew_crossover_result_size(void);
 
+// ---------------------------------------------------------------------------
+// Real-time analyser.
+//
+// Stateful, unlike everything else here: it accumulates blocks, overlaps and
+// windows them, and averages over time. So it is an opaque handle rather than a
+// pure call. Create one, push audio as it arrives, read the spectrum whenever
+// you want to draw, destroy it when done.
+// ---------------------------------------------------------------------------
+typedef struct rew_rta_config {
+  double fs;
+  double overlap;      // 0 keeps the default
+  double averaging;    // 0 keeps the default
+  double smoothFrac;   // <0 means none; 0 keeps the default
+  double fMin;
+  double fMax;
+  size_t fftSize;      // 0 keeps the default
+  size_t points;       // 0 keeps the raw FFT grid
+  int pinkWeighted;
+  int reserved_;
+} rew_rta_config;
+
+typedef struct rew_rta rew_rta;
+
+REW_EXPORT rew_rta* rew_rta_create(const rew_rta_config* cfg);
+REW_EXPORT void rew_rta_destroy(rew_rta* rta);
+
+// Feed captured samples; returns how many new spectra were folded in.
+REW_EXPORT size_t rew_rta_push(rew_rta* rta, const double* samples, size_t n);
+
+// Current time-averaged spectrum. Returns the number of points written.
+REW_EXPORT size_t rew_rta_spectrum(rew_rta* rta, double* freqOut, double* magOut,
+                                   size_t cap);
+// Highest level seen at each frequency since the last reset.
+REW_EXPORT size_t rew_rta_peak_hold(rew_rta* rta, double* freqOut,
+                                    double* magOut, size_t cap);
+
+REW_EXPORT double rew_rta_level_dbfs(rew_rta* rta);
+REW_EXPORT void rew_rta_reset(rew_rta* rta, int averaging, int peakHold);
+
+REW_EXPORT size_t rew_rta_config_size(void);
+
 #ifdef __cplusplus
 }
 #endif
