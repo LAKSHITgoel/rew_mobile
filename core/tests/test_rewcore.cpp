@@ -343,10 +343,13 @@ static void testFfiPeqErrorOut() {
   }
   std::vector<double> fo(10), go(10), qo(10), err(4), conf(10), decl(20);
   std::vector<int> rsn(10);
-  const size_t bands = rew_fit_peq_flat(
-      freq.data(), mag.data(), n, fs, 20, 20000, 10, 0.0, 0.0, nullptr, nullptr,
-      fo.data(), go.data(), qo.data(), rsn.data(), conf.data(), decl.data(), 10,
-      err.data());
+  rew_peq_request req = {};
+  req.freq = freq.data(); req.mag = mag.data(); req.n = n;
+  req.fs = fs; req.fMin = 20; req.fMax = 20000; req.maxBands = 10;
+  req.freqOut = fo.data(); req.gainOut = go.data(); req.qOut = qo.data();
+  req.reasonOut = rsn.data(); req.confOut = conf.data();
+  req.declinedOut = decl.data(); req.declinedCap = 10; req.errOut = err.data();
+  const size_t bands = rew_fit_peq(&req);
   CHECK(bands > 0);
   CHECK(err[0] > 1.0);          // initial error meaningful
   CHECK(err[1] < err[0]);       // EQ reduced it
@@ -360,10 +363,9 @@ static void testFfiPeqErrorOut() {
   // Bluetooth link's cutoff from being "corrected".
   std::vector<unsigned char> valid(n, 0);
   for (int i = 0; i < n; ++i) valid[i] = freq[i] < 500.0 ? 1 : 0;
-  const size_t masked = rew_fit_peq_flat(
-      freq.data(), mag.data(), n, fs, 20, 20000, 10, 0.0, 0.0, valid.data(),
-      nullptr, fo.data(), go.data(), qo.data(), rsn.data(), conf.data(),
-      decl.data(), 10, err.data());
+  rew_peq_request maskedReq = req;
+  maskedReq.valid = valid.data();
+  const size_t masked = rew_fit_peq(&maskedReq);
   CHECK(masked > 0);
   for (size_t i = 0; i < masked; ++i) CHECK(fo[i] < 500.0);
 
@@ -509,10 +511,14 @@ static void testPeqReportsLevelTrim() {
   }
   std::vector<double> fo(10), go(10), qo(10), err(4), conf(10), decl(20);
   std::vector<int> rsn(10);
-  const size_t bands = rew_fit_peq_flat(
-      freq.data(), mag.data(), n, fs, 20, 20000, 10, 0.0, 6.0, nullptr, nullptr,
-      fo.data(), go.data(), qo.data(), rsn.data(), conf.data(), decl.data(), 10,
-      err.data());
+  rew_peq_request req = {};
+  req.freq = freq.data(); req.mag = mag.data(); req.n = n;
+  req.fs = fs; req.fMin = 20; req.fMax = 20000; req.maxBands = 10;
+  req.maxCutDb = 6.0;
+  req.freqOut = fo.data(); req.gainOut = go.data(); req.qOut = qo.data();
+  req.reasonOut = rsn.data(); req.confOut = conf.data();
+  req.declinedOut = decl.data(); req.declinedCap = 10; req.errOut = err.data();
+  const size_t bands = rew_fit_peq(&req);
   CHECK(bands > 0);
   for (size_t i = 0; i < bands; ++i) CHECK(go[i] >= -6.0 - 1e-9);
   CHECK(err[2] > 0.0);  // and it says how far to turn the channel down

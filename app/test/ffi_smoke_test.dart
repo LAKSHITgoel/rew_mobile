@@ -61,6 +61,14 @@ void main() {
   late Rewcore core;
   setUpAll(() => core = Rewcore.open(libraryPath: libPath));
 
+  test('the Dart mirror of rew_peq_request matches the C struct layout', () {
+    // If this fails, a field was added or reordered on one side only. The fit
+    // would keep compiling and start reading garbage where it expects a
+    // pointer, so it is worth an explicit check rather than a crash in the car.
+    expect(core.peqRequestLayoutMatches(), isTrue,
+        reason: 'rew_peq_request layout disagrees between C and Dart');
+  });
+
   test('rew_version returns a version string', () {
     expect(core.version(), isNotEmpty);
   });

@@ -157,6 +157,15 @@ class Rewcore {
     }
   }
 
+  /// Asserts the Dart mirror of `rew_peq_request` agrees with the C struct.
+  ///
+  /// A struct ABI makes a transposed argument a compile error, but it makes a
+  /// mismatched layout silent corruption — the fit would simply read garbage
+  /// where it expected a pointer. Checking the size catches the realistic
+  /// failure (a field added on one side only) immediately.
+  bool peqRequestLayoutMatches() =>
+      _b.rewPeqRequestSize() == ffi.sizeOf<RewPeqRequest>();
+
   /// Per-point standard deviation across repeated captures, in dB.
   ///
   /// Averaging captures together and keeping only the mean throws away the most
@@ -200,6 +209,11 @@ class Rewcore {
     /// switched off, not a correction.
     double maxCutDb = 6.0,
 
+    /// Deepest boost any band may apply. Kept low on purpose: a boost costs
+    /// headroom everywhere, and in a car the dip is usually cancellation that
+    /// will swallow it anyway.
+    double maxBoostDb = 3.0,
+
     /// Per-point trust, same length as [measured]. Points marked false are left
     /// out of the fit entirely — use it to exclude anything the sweep did not
     /// lift clear of the noise.
@@ -239,11 +253,32 @@ class Rewcore {
       if (spreadPtr != ffi.nullptr) {
         spreadPtr.asTypedList(n).setAll(0, spreadDb!);
       }
-      final count = _b.rewFitPeqFlat(
-          freq, mag, n, fs, fMin, fMax, maxBands, targetPercentile, maxCutDb,
-          validPtr.cast<ffi.UnsignedChar>(), spreadPtr.cast<ffi.Double>(),
-          fOut, gOut, qOut, reasonOut, confOut, declinedOut, declinedCap,
-          errOut);
+
+      final req = calloc<RewPeqRequest>();
+      try {
+        final r = req.ref
+          ..freq = freq
+          ..mag = mag
+          ..valid = validPtr.cast<ffi.UnsignedChar>()
+          ..spread = spreadPtr.cast<ffi.Double>()
+          ..n = n
+          ..fs = fs
+          ..fMin = fMin
+          ..fMax = fMax
+          ..targetPercentile = targetPercentile
+          ..maxCutDb = maxCutDb
+          ..maxBoostDb = maxBoostDb
+          ..maxBands = maxBands
+          ..freqOut = fOut
+          ..gainOut = gOut
+          ..qOut = qOut
+          ..reasonOut = reasonOut
+          ..confOut = confOut
+          ..declinedOut = declinedOut
+          ..declinedCap = declinedCap
+          ..errOut = errOut;
+        assert(r.n == n);
+        final count = _b.rewFitPeq(req);
       final bands = <PeqBand>[];
       for (var i = 0; i < count; i++) {
         bands.add(PeqBand(
@@ -262,13 +297,16 @@ class Rewcore {
           freqHz: declinedOut[i * 2 + 1],
         ));
       }
-      return EqResult(
-        bands: bands,
-        initialErrorDb: errOut[0],
-        finalErrorDb: errOut[1],
-        suggestedLevelTrimDb: errOut[2],
-        declined: declined,
-      );
+        return EqResult(
+          bands: bands,
+          initialErrorDb: errOut[0],
+          finalErrorDb: errOut[1],
+          suggestedLevelTrimDb: errOut[2],
+          declined: declined,
+        );
+      } finally {
+        calloc.free(req);
+      }
     } finally {
       calloc.free(freq);
       calloc.free(mag);

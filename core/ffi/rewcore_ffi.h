@@ -37,7 +37,7 @@ REW_EXPORT double rew_rms_dbfs(const double* samples, size_t n);
 
 // Per-point standard deviation, in dB, across `count` responses of `n` points
 // each (magnitudes laid out contiguously). This is measurement repeatability;
-// feed it to rew_fit_peq_flat so unrepeatable features are not "corrected".
+// feed it to rew_fit_peq so unrepeatable features are not "corrected".
 REW_EXPORT size_t rew_response_spread(const double* mags, size_t count, size_t n,
                                       double* out);
 
@@ -72,20 +72,58 @@ REW_EXPORT size_t rew_measure_fr(const double* emitted, size_t emittedLen,
 // `targetPercentile` places the flat target within the usable band's level
 // distribution: low values cut peaks hard (flatter, but the whole response ends
 // up quieter), high values correct gently. Pass 0 for the default (0.25).
-// Fit EQ, and say why. `spread` (optional, length n) is the per-point standard
-// deviation across repeated captures; supplying it gates out features that did
-// not hold still. `reasonOut`/`confOut` receive one entry per returned band (see
-// PeqReason in peq.hpp for the codes). `declinedOut` receives interleaved
-// (reasonCode, frequency) pairs for features deliberately left alone, up to
-// `declinedCap` pairs, and the count is returned in errOut[3].
-REW_EXPORT size_t rew_fit_peq_flat(const double* freq, const double* mag, size_t n, double fs,
-                        double fMin, double fMax, int maxBands,
-                        double targetPercentile, double maxCutDb,
-                        const unsigned char* valid, const double* spread,
-                        double* freqOut, double* gainOut, double* qOut,
-                        int* reasonOut, double* confOut,
-                        double* declinedOut, size_t declinedCap,
-                        double* errOut);
+// Fit EQ, and say why.
+//
+// Passed as a struct rather than as positional arguments: this call had grown
+// to nineteen of them, most of them pointers or doubles, so any two transposed
+// still compiled and quietly computed nonsense. Named fields make that a
+// compile error, and adding a parameter no longer changes the arity for every
+// caller.
+typedef struct rew_peq_request {
+  // --- measurement ---
+  const double* freq;          // length n
+  const double* mag;           // length n, dB
+  // Optional, length n. Points marked 0 are excluded from the fit entirely:
+  // use it to drop anything the sweep did not lift clear of the noise.
+  const unsigned char* valid;
+  // Optional, length n. Per-point standard deviation across repeated captures
+  // (see rew_response_spread). Supplying it lets the fitter tell a property of
+  // the car from something that happened once.
+  const double* spread;
+  size_t n;
+
+  // --- constraints ---
+  double fs;
+  double fMin;
+  double fMax;
+  double targetPercentile;  // 0 keeps the built-in default
+  double maxCutDb;          // 0 keeps the built-in default
+  double maxBoostDb;        // 0 keeps the built-in default
+  int maxBands;
+  int reserved_;            // explicit padding, so the layout is unambiguous
+
+  // --- outputs, all caller-allocated ---
+  double* freqOut;      // maxBands
+  double* gainOut;      // maxBands
+  double* qOut;         // maxBands
+  int* reasonOut;       // maxBands, PeqReason codes (optional)
+  double* confOut;      // maxBands, 0..1 (optional)
+  // Interleaved (reasonCode, frequency) pairs for features deliberately left
+  // alone; up to declinedCap pairs. The count comes back in errOut[3].
+  double* declinedOut;
+  size_t declinedCap;
+  // At least 4 doubles: initial error, final error, suggested level trim,
+  // number of declined entries written.
+  double* errOut;
+} rew_peq_request;
+
+REW_EXPORT size_t rew_fit_peq(const rew_peq_request* req);
+
+// sizeof(rew_peq_request), so a binding in another language can assert its own
+// layout matches. A struct ABI turns a transposed argument into a compile
+// error, but it turns a mismatched layout into silent corruption — this is how
+// the Dart side proves it agrees.
+REW_EXPORT size_t rew_peq_request_size(void);
 
 // Recommend crossover edges for one measured driver (parallel freq/mag, length `n`).
 // Writes the high-pass edge to hpOut and low-pass edge to lpOut (Hz). Returns a bit

@@ -48,20 +48,55 @@ typedef RewMeasureFrDart = int Function(
 //                         targetPercentile, maxCutDb, valid*,
 //                         freqOut*, gainOut*, qOut*, errOut*);
 // errOut receives THREE doubles: initial error, final error, suggested level trim.
-typedef _RewFitPeqFlatC = ffi.Size Function(
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double,
-    ffi.Double, ffi.Double, ffi.Int, ffi.Double, ffi.Double,
-    ffi.Pointer<ffi.UnsignedChar>, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Int>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
-    ffi.Size, ffi.Pointer<ffi.Double>);
-typedef RewFitPeqFlatDart = int Function(
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
-    double, double, int, double, double,
-    ffi.Pointer<ffi.UnsignedChar>, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
-    ffi.Pointer<ffi.Int>, ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>,
-    int, ffi.Pointer<ffi.Double>);
+/// Mirrors `rew_peq_request` in core/ffi/rewcore_ffi.h. **Field order and types
+/// must match that struct exactly** — Dart lays this out with the platform C
+/// ABI, so a reordering here is silent corruption, not a compile error. The
+/// `reserved` int is the explicit padding the C side declares for the same
+/// reason.
+final class RewPeqRequest extends ffi.Struct {
+  external ffi.Pointer<ffi.Double> freq;
+  external ffi.Pointer<ffi.Double> mag;
+  external ffi.Pointer<ffi.UnsignedChar> valid;
+  external ffi.Pointer<ffi.Double> spread;
+  @ffi.Size()
+  external int n;
+
+  @ffi.Double()
+  external double fs;
+  @ffi.Double()
+  external double fMin;
+  @ffi.Double()
+  external double fMax;
+  @ffi.Double()
+  external double targetPercentile;
+  @ffi.Double()
+  external double maxCutDb;
+  @ffi.Double()
+  external double maxBoostDb;
+  @ffi.Int()
+  external int maxBands;
+  @ffi.Int()
+  external int reserved;
+
+  external ffi.Pointer<ffi.Double> freqOut;
+  external ffi.Pointer<ffi.Double> gainOut;
+  external ffi.Pointer<ffi.Double> qOut;
+  external ffi.Pointer<ffi.Int> reasonOut;
+  external ffi.Pointer<ffi.Double> confOut;
+  external ffi.Pointer<ffi.Double> declinedOut;
+  @ffi.Size()
+  external int declinedCap;
+  external ffi.Pointer<ffi.Double> errOut;
+}
+
+// size_t rew_peq_request_size(void);
+typedef _RewPeqRequestSizeC = ffi.Size Function();
+typedef RewPeqRequestSizeDart = int Function();
+
+// size_t rew_fit_peq(const rew_peq_request*);
+typedef _RewFitPeqC = ffi.Size Function(ffi.Pointer<RewPeqRequest>);
+typedef RewFitPeqDart = int Function(ffi.Pointer<RewPeqRequest>);
+
 
 // size_t rew_response_spread(mags*, count, n, out*);
 typedef _RewResponseSpreadC = ffi.Size Function(
@@ -92,8 +127,11 @@ class RewcoreBindings {
                 'rew_generate_noise'),
         rewMeasureFr = lib
             .lookupFunction<_RewMeasureFrC, RewMeasureFrDart>('rew_measure_fr'),
-        rewFitPeqFlat = lib.lookupFunction<_RewFitPeqFlatC, RewFitPeqFlatDart>(
-            'rew_fit_peq_flat'),
+        rewFitPeq =
+            lib.lookupFunction<_RewFitPeqC, RewFitPeqDart>('rew_fit_peq'),
+        rewPeqRequestSize =
+            lib.lookupFunction<_RewPeqRequestSizeC, RewPeqRequestSizeDart>(
+                'rew_peq_request_size'),
         rewResponseSpread =
             lib.lookupFunction<_RewResponseSpreadC, RewResponseSpreadDart>(
                 'rew_response_spread'),
@@ -106,7 +144,8 @@ class RewcoreBindings {
   final RewGenerateNoiseDart rewGenerateNoise;
   final RewRmsDbfsDart rewRmsDbfs;
   final RewMeasureFrDart rewMeasureFr;
-  final RewFitPeqFlatDart rewFitPeqFlat;
+  final RewFitPeqDart rewFitPeq;
+  final RewPeqRequestSizeDart rewPeqRequestSize;
   final RewResponseSpreadDart rewResponseSpread;
   final RewRecommendCrossoverDart rewRecommendCrossover;
 
