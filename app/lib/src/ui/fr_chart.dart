@@ -20,17 +20,41 @@ class FrChart extends StatelessWidget {
     required this.curves,
     this.fMin = 20,
     this.fMax = 20000,
-    this.dbMin = -24,
-    this.dbMax = 24,
+    this.dbMin,
+    this.dbMax,
     this.height = 240,
   });
 
   final List<FrCurve> curves;
-  final double fMin, fMax, dbMin, dbMax, height;
+  final double fMin, fMax, height;
+
+  /// Null means "fit the data". A fixed window silently clips: a measurement
+  /// whose levels sit outside it draws as a flat line along an edge, or as
+  /// nothing at all, which reads as a broken measurement rather than as a
+  /// chart that cannot show it.
+  final double? dbMin, dbMax;
+
+  ({double lo, double hi}) _range() {
+    if (dbMin != null && dbMax != null) return (lo: dbMin!, hi: dbMax!);
+    var lo = double.infinity, hi = double.negativeInfinity;
+    for (final c in curves) {
+      for (final v in c.response.magDb) {
+        if (v.isNaN || v.isInfinite) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    if (lo > hi) return (lo: dbMin ?? -24, hi: dbMax ?? 24);
+    lo = (lo / 6).floorToDouble() * 6;
+    hi = (hi / 6).ceilToDouble() * 6;
+    if (hi - lo < 24) hi = lo + 24;
+    return (lo: dbMin ?? lo, hi: dbMax ?? hi);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final range = _range();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -42,8 +66,8 @@ class FrChart extends StatelessWidget {
               curves: curves,
               fMin: fMin,
               fMax: fMax,
-              dbMin: dbMin,
-              dbMax: dbMax,
+              dbMin: range.lo,
+              dbMax: range.hi,
               gridColor: theme.dividerColor,
               textColor: theme.textTheme.bodySmall?.color ?? Colors.grey,
             ),
