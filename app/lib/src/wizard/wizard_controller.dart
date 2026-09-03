@@ -285,7 +285,7 @@ class WizardController extends ChangeNotifier {
     await _run('Measuring system response…', () async {
       final m = await service.measureAveraged(averagingPositions, band: band);
       final fr = m.response;
-      final eq = service.fitEq(fr, maxBands: eqMaxBands, band: band);
+      final eq = await service.fitEq(fr, maxBands: eqMaxBands, band: band);
       lastMeasurement = fr;
       lastEq = eq;
       project.measured['system'] = fr;

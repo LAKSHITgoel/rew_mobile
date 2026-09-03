@@ -1,6 +1,12 @@
 // Orchestrates a measurement: generate the sweep, play+capture through the audio
 // backend, deconvolve to a frequency response, and (for EQ) fit parametric bands.
 // Ties together the native DSP (Rewcore) and the audio backend (mock or native).
+//
+// The heavy DSP runs in a background isolate. It must: a measurement is a pair of
+// ~500k-point FFTs and takes several seconds on a phone, and Android declares the
+// app "not responding" after about five seconds of a blocked main thread — which
+// is exactly what happened the first time this was used in the car.
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -40,20 +46,18 @@ class MeasurementService {
 
   // Sweeps are cached per band; regenerating a 3 s sweep on every measurement of
   // an averaged set would be wasteful.
-  final Map<String, Float64List> _sweeps = {};
+  final Map<String, Future<Float64List>> _sweeps = {};
 
   /// The stimulus for [band]. The swept range is deliberately a little wider than
   /// the analysed range, so the sweep's fade-in/out never lands on a band edge.
-  Float64List sweepFor(SweepBand band) {
+  Future<Float64List> sweepFor(SweepBand band) {
     return _sweeps.putIfAbsent(band.label, () {
-      final f1 = (band.fLo / 1.1).clamp(10.0, config.fs / 2);
-      final f2 = (band.fHi * 1.1).clamp(20.0, config.fs * 0.45);
-      return _core.generateSweep(
-        fs: config.fs,
-        f1: f1,
-        f2: f2,
-        durationSec: config.durationSec,
-      );
+      final fs = config.fs;
+      final dur = config.durationSec;
+      final f1 = (band.fLo / 1.1).clamp(10.0, fs / 2);
+      final f2 = (band.fHi * 1.1).clamp(20.0, fs * 0.45);
+      return Isolate.run(() => Rewcore.open()
+          .generateSweep(fs: fs, f1: f1, f2: f2, durationSec: dur));
     });
   }
 
@@ -66,29 +70,43 @@ class MeasurementService {
   Future<void> stopTone() => _audio.stopTone();
 
   /// Play a looping band-limited pink-noise block for centring by ear.
-  Future<void> startCentringNoise({double fLo = 200, double fHi = 4000}) {
-    final noise = _core.generateNoise(
-        fs: config.fs, durationSec: 2, fLo: fLo, fHi: fHi, amplitude: 0.3);
-    return _audio.startTone(samples: noise, fs: config.fs);
+  Future<void> startCentringNoise({double fLo = 200, double fHi = 4000}) async {
+    final fs = config.fs;
+    final noise = await Isolate.run(() => Rewcore.open()
+        .generateNoise(fs: fs, durationSec: 2, fLo: fLo, fHi: fHi, amplitude: 0.3));
+    await _audio.startTone(samples: noise, fs: fs);
   }
 
   /// Run a single capture over [band]: magnitude response plus captured level.
   Future<Measurement> measureOnce({SweepBand band = SweepBand.full}) async {
-    final stimulus = sweepFor(band);
+    final stimulus = await sweepFor(band);
     final recorded =
         await _audio.playSweepAndCapture(sweep: stimulus, fs: config.fs);
-    final level = _core.rmsDbfs(recorded);
-    final response = _core.measureFr(
-      emitted: stimulus,
-      recorded: recorded,
-      fs: config.fs,
-      fMin: band.fLo,
-      fMax: band.fHi,
-      smoothFrac: config.smoothFrac,
-      points: config.points,
-      calibration: calibration,
-    );
-    return Measurement(response: response, levelDbfs: level);
+
+    // Everything below is seconds of FFT work, so it happens off the main
+    // isolate; blocking the UI thread here is what triggers an ANR.
+    final fs = config.fs;
+    final smooth = config.smoothFrac;
+    final pts = config.points;
+    final fLo = band.fLo;
+    final fHi = band.fHi;
+    final cal = calibration;
+
+    return Isolate.run(() {
+      final core = Rewcore.open();
+      final level = core.rmsDbfs(recorded);
+      final response = core.measureFr(
+        emitted: stimulus,
+        recorded: recorded,
+        fs: fs,
+        fMin: fLo,
+        fMax: fHi,
+        smoothFrac: smooth,
+        points: pts,
+        calibration: cal,
+      );
+      return Measurement(response: response, levelDbfs: level);
+    });
   }
 
   /// Recommend crossover edges from a single driver's measured response.
@@ -109,15 +127,18 @@ class MeasurementService {
         response: _powerAverage(all), levelDbfs: levelSum / n);
   }
 
-  EqResult fitEq(FreqResponse measured,
+  Future<EqResult> fitEq(FreqResponse measured,
       {int maxBands = 10, SweepBand band = SweepBand.full}) {
-    return _core.fitPeqFlat(
-      measured: measured,
-      fs: config.fs,
-      fMin: band.fLo,
-      fMax: band.fHi,
-      maxBands: maxBands,
-    );
+    final fs = config.fs;
+    final fLo = band.fLo;
+    final fHi = band.fHi;
+    return Isolate.run(() => Rewcore.open().fitPeqFlat(
+          measured: measured,
+          fs: fs,
+          fMin: fLo,
+          fMax: fHi,
+          maxBands: maxBands,
+        ));
   }
 
   static FreqResponse _powerAverage(List<FreqResponse> ms) {
