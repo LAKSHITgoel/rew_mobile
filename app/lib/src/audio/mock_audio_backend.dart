@@ -49,6 +49,7 @@ class MockAudioBackend implements AudioBackend {
 
   // A plausible wandering level so the meter can be exercised with no hardware.
   StreamController<MicLevel>? _levelCtl;
+  double _mockPhase = 0;
   Timer? _levelTimer;
   bool _tonePlaying = false;
 
@@ -57,13 +58,25 @@ class MockAudioBackend implements AudioBackend {
       (_levelCtl ??= StreamController<MicLevel>.broadcast()).stream;
 
   @override
-  Future<void> startInputLevel() async {
+  Future<void> startInputLevel({bool withSamples = false}) async {
     final ctl = _levelCtl ??= StreamController<MicLevel>.broadcast();
     final rnd = Random(seed);
     _levelTimer?.cancel();
     _levelTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       final rms = -46 + rnd.nextDouble() * 10 + (_tonePlaying ? 20 : 0);
-      ctl.add(MicLevel(rmsDb: rms, peakDb: rms + 6));
+      // With samples requested, synthesise a block so the analyser has
+      // something plausible to chew on with no hardware present.
+      Float64List? block;
+      if (withSamples) {
+        const n = 2400; // ~50 ms at 48 kHz, matching the native block size
+        final amp = _tonePlaying ? 0.2 : 0.01;
+        block = Float64List(n);
+        for (var i = 0; i < n; i++) {
+          _mockPhase += 2 * pi * 1000 / 48000;
+          block[i] = amp * sin(_mockPhase) + (rnd.nextDouble() - 0.5) * 0.002;
+        }
+      }
+      ctl.add(MicLevel(rmsDb: rms, peakDb: rms + 6, samples: block));
     });
   }
 

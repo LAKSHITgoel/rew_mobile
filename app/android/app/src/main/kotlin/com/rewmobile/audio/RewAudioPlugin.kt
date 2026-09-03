@@ -77,7 +77,11 @@ class RewAudioPlugin(private val context: Context) :
                     }
                 }
             }
-            "startInputLevel" -> { startInputLevel(); result.success(null) }
+            "startInputLevel" -> {
+                sendBlocks = (call.argument<Boolean>("withSamples")) ?: false
+                startInputLevel()
+                result.success(null)
+            }
             "stopInputLevel" -> { stopInputLevel(); result.success(null) }
             "startTone" -> {
                 val bytes = call.argument<ByteArray>("samples")
@@ -246,6 +250,12 @@ class RewAudioPlugin(private val context: Context) :
     }
 
     /** Streams input level (dBFS RMS) to Dart ~20x/second. */
+    // When on, the level stream also carries the raw samples, which is what the
+    // real-time analyser needs. Deliberately the SAME capture loop rather than a
+    // second AudioRecord: only one recorder can hold the USB mic reliably, and
+    // two of them racing for it is how the meter used to wedge.
+    @Volatile private var sendBlocks = false
+
     private fun startInputLevel() {
         if (levelRunning) return
         levelRunning = true
@@ -274,9 +284,19 @@ class RewAudioPlugin(private val context: Context) :
                     val rms = kotlin.math.sqrt(sum / n)
                     val rmsDb = 20.0 * kotlin.math.log10(rms + 1e-12)
                     val peakDb = 20.0 * kotlin.math.log10(peak + 1e-12)
-                    main.post {
-                        levelSink?.success(mapOf("rmsDb" to rmsDb, "peakDb" to peakDb))
+                    val payload = HashMap<String, Any>(3)
+                    payload["rmsDb"] = rmsDb
+                    payload["peakDb"] = peakDb
+                    if (sendBlocks) {
+                        // float32 little-endian: the analyser wants the samples,
+                        // not a summary of them.
+                        val bytes = ByteBuffer.allocate(n * 4)
+                            .order(ByteOrder.LITTLE_ENDIAN)
+                        for (i in 0 until n) bytes.putFloat(block[i])
+                        payload["samples"] = bytes.array()
+                        payload["fs"] = fs.toDouble()
                     }
+                    main.post { levelSink?.success(payload) }
                 }
             } catch (e: Exception) {
                 main.post { levelSink?.error("LEVEL", e.message, null) }
@@ -290,6 +310,7 @@ class RewAudioPlugin(private val context: Context) :
 
     private fun stopInputLevel() {
         levelRunning = false
+        sendBlocks = false
         // read() is blocking, so the thread will not notice levelRunning until it
         // returns. Stopping the record first unblocks it; without this the join
         // times out and the next start races a still-live AudioRecord.

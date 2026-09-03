@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../app_services.dart';
 import '../models/project.dart';
+import '../wizard/rta_controller.dart';
+import 'rta_screen.dart';
 import '../services/measurement_service.dart';
 import '../wizard/wizard_controller.dart';
 import 'wizard_screen.dart';
@@ -25,6 +27,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _reload() {
     _projects = widget.services.store.list();
+  }
+
+  /// The analyser is not part of the tuning sequence — it is an instrument you
+  /// pick up when something needs looking at — so it lives beside the tunes
+  /// rather than inside one.
+  Future<void> _openRta() async {
+    final controller = RtaController(
+      audio: widget.services.audio,
+      core: widget.services.core,
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => RtaScreen(controller: controller)),
+    );
+    controller.dispose();
   }
 
   Future<void> _openWizard(TuneProject project) async {
@@ -74,7 +90,16 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Car Audio Tuner')),
+      appBar: AppBar(
+        title: const Text('Car Audio Tuner'),
+        actions: [
+          IconButton(
+            tooltip: 'Real-time analyser',
+            icon: const Icon(Icons.graphic_eq),
+            onPressed: _openRta,
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _newTune,
         icon: const Icon(Icons.add),

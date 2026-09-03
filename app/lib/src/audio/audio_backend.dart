@@ -12,9 +12,14 @@ class MicInfo {
 
 /// One input-level reading from the microphone.
 class MicLevel {
-  const MicLevel({required this.rmsDb, required this.peakDb});
+  const MicLevel({required this.rmsDb, required this.peakDb, this.samples});
   final double rmsDb;
   final double peakDb;
+
+  /// The raw block this level was computed from, when the stream was started
+  /// with samples requested. The analyser concatenates these, so they must be
+  /// contiguous — a dropped block splices the waveform.
+  final Float64List? samples;
 
   /// Roughly "is the mic hearing anything at all". Room tone on a UMIK-1 sits
   /// well below this; speech or a tap sits well above.
@@ -38,7 +43,8 @@ abstract class AudioBackend {
   /// Live input level, for confirming the mic is connected AND hearing sound.
   /// Only produces values between [startInputLevel] and [stopInputLevel].
   Stream<MicLevel> get inputLevels;
-  Future<void> startInputLevel();
+  /// [withSamples] also streams the raw audio, for the real-time analyser.
+  Future<void> startInputLevel({bool withSamples = false});
   Future<void> stopInputLevel();
 
   /// Loop [samples] out as media until [stopTone] — the centring signal for

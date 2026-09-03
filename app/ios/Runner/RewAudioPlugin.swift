@@ -32,6 +32,7 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     private var levelTapped = false
     private var lastLevelSent = Date.distantPast
     private var tonePlaying = false
+    private var sendBlocks = false
 
     // MARK: - Registration
 
@@ -80,6 +81,10 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
             }
 
         case "startInputLevel":
+            // When true the level stream also carries the raw samples, which is
+            // what the real-time analyser needs. Same tap rather than a second
+            // one: only one tap may be installed on the input bus.
+            sendBlocks = (args["withSamples"] as? Bool) ?? false
             work.async {
                 do {
                     try self.startInputLevel()
@@ -360,13 +365,27 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
             }
             let rms = (sum / Double(n)).squareRoot()
             // Throttle to ~20 Hz; a meter updated per buffer just burns battery.
+            // But never drop a buffer while streaming samples: the analyser
+            // concatenates them, so a gap splices the waveform and puts a
+            // discontinuity through the FFT that looks like broadband noise.
             let now = Date()
-            guard now.timeIntervalSince(self.lastLevelSent) > 0.05 else { return }
+            if !self.sendBlocks {
+                guard now.timeIntervalSince(self.lastLevelSent) > 0.05 else { return }
+            }
             self.lastLevelSent = now
-            let payload: [String: Any] = [
+            var payload: [String: Any] = [
                 "rmsDb": RewAudioPlugin.dbfs(rms),
                 "peakDb": RewAudioPlugin.dbfs(peak),
             ]
+            if self.sendBlocks {
+                // float32 little-endian, matching the Android side so the Dart
+                // decoding is shared.
+                var floats = [Float](repeating: 0, count: n)
+                for i in 0..<n { floats[i] = src[i] }
+                let data = floats.withUnsafeBufferPointer { Data(buffer: $0) }
+                payload["samples"] = FlutterStandardTypedData(bytes: data)
+                payload["fs"] = b.format.sampleRate
+            }
             DispatchQueue.main.async { self.levelSink?(payload) }
         }
         levelTapped = true
@@ -375,6 +394,7 @@ public final class RewAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     }
 
     private func stopInputLevel() {
+        sendBlocks = false
         guard levelTapped else { return }
         engine.inputNode.removeTap(onBus: 0)
         levelTapped = false
