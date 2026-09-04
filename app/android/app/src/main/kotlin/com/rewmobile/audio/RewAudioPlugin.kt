@@ -104,12 +104,23 @@ class RewAudioPlugin(private val context: Context) :
                 it.type == AudioDeviceInfo.TYPE_USB_HEADSET
         }
 
-    private fun micStatus(): Map<String, Any?> {
+    // Must always answer, never raise.
+    //
+    // Enumerating audio devices can fail while Android is rebuilding its device
+    // list, which is precisely what happens as a USB microphone is plugged in or
+    // the phone changes audio route in a car. Letting that become a channel
+    // error meant the Dart side threw inside the Measure tap handler, where
+    // nothing caught it, and the measurement silently never started. Reporting
+    // "I could not tell" lets the app say so instead.
+    private fun micStatus(): Map<String, Any?> = try {
         val dev = usbInput()
-        return mapOf(
+        mapOf(
             "connected" to (dev != null),
             "name" to dev?.productName?.toString(),
         )
+    } catch (e: Exception) {
+        Log.w(TAG, "micStatus failed: ${e.message}")
+        mapOf("connected" to false, "name" to null, "error" to e.message)
     }
 
     /** Build an AudioRecord, preferring an unprocessed source (no AGC/noise

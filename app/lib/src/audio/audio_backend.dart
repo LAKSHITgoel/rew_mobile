@@ -5,9 +5,17 @@
 import 'dart:typed_data';
 
 class MicInfo {
-  const MicInfo({required this.connected, this.name});
+  const MicInfo({required this.connected, this.name, this.probeError});
   final bool connected;
   final String? name;
+
+  /// Set when the probe itself failed, rather than succeeding and finding
+  /// nothing. The two are very different: "no microphone is plugged in" is an
+  /// answer, "I could not ask" is not, and treating the second as the first
+  /// hides a broken audio path behind a familiar-looking warning.
+  final String? probeError;
+
+  bool get probeFailed => probeError != null;
 }
 
 /// One input-level reading from the microphone.

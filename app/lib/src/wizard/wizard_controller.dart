@@ -460,8 +460,24 @@ class WizardController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Show an error that happened outside [_run] — before a measurement got
+  /// far enough for the normal error handling to cover it.
+  void reportError(String message) {
+    lastError = message;
+    status = message;
+    notifyListeners();
+  }
+
   Future<void> refreshMic() async {
-    mic = await service.micStatus();
+    // Belt and braces with the backend's own guard: whatever goes wrong while
+    // asking about the microphone, it must not stop a measurement from being
+    // attempted. Failing to probe is reported as a failed probe, not silently
+    // as "no microphone".
+    try {
+      mic = await service.micStatus();
+    } catch (e) {
+      mic = MicInfo(connected: false, probeError: '$e');
+    }
     notifyListeners();
   }
 

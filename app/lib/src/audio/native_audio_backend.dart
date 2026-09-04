@@ -71,11 +71,26 @@ class NativeAudioBackend implements AudioBackend {
 
   @override
   Future<MicInfo> micStatus() async {
-    final res = await _channel.invokeMapMethod<String, dynamic>('micStatus');
-    return MicInfo(
-      connected: (res?['connected'] as bool?) ?? false,
-      name: res?['name'] as String?,
-    );
+    // Never allowed to throw or to hang.
+    //
+    // This is called first thing when Measure is tapped, and it used to be able
+    // to do both: it enumerates audio devices on the platform thread, which can
+    // fail or stall while Android is rebuilding its device list — exactly what
+    // happens when a USB microphone is plugged in, unplugged, or the phone
+    // switches audio route in a car. An exception here propagated out of the
+    // tap handler with nothing to catch it, so the measurement silently never
+    // started: no spinner, no error, a button that appeared dead.
+    try {
+      final res = await _channel
+          .invokeMapMethod<String, dynamic>('micStatus')
+          .timeout(const Duration(seconds: 3));
+      return MicInfo(
+        connected: (res?['connected'] as bool?) ?? false,
+        name: res?['name'] as String?,
+      );
+    } catch (e) {
+      return MicInfo(connected: false, probeError: '$e');
+    }
   }
 
   @override

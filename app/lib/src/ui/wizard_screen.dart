@@ -45,7 +45,25 @@ class _WizardScreenState extends State<WizardScreen> {
   /// people learn to dismiss is worse than no prompt at all.
   bool _micWarningAccepted = false;
 
+  /// Everything a Measure button does, with a guarantee attached: a tap always
+  /// produces something visible.
+  ///
+  /// This wrapper runs before the controller's own error handling, so anything
+  /// that failed in here used to vanish — the tap did nothing at all, which is
+  /// indistinguishable from a dead button and is exactly how this has been
+  /// reported from the car more than once. The whole body is now guarded, and
+  /// a failure is shown rather than swallowed.
   Future<void> _measure(Future<void> Function() run) async {
+    try {
+      await _measureGuarded(run);
+    } catch (e, st) {
+      debugPrint('[rew] measure failed before starting: $e\n$st');
+      if (!mounted) return;
+      c.reportError('Could not start the measurement: $e');
+    }
+  }
+
+  Future<void> _measureGuarded(Future<void> Function() run) async {
     await c.refreshMic();
     if (!mounted) return;
 
@@ -62,13 +80,21 @@ class _WizardScreenState extends State<WizardScreen> {
       final ok = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
-              title: const Text('Measuring without the UMIK-1'),
-              content: const Text(
-                  'The measurement microphone is not plugged in, so the phone '
-                  'would record with its own — which is not calibrated and is '
-                  'not where you sit. The result would not describe your car.\n\n'
-                  'Plug it in over USB OTG, or carry on if you are just trying '
-                  'the app out.'),
+              title: Text(c.mic?.probeFailed == true
+                  ? 'Could not check the microphone'
+                  : 'Measuring without the UMIK-1'),
+              content: Text(c.mic?.probeFailed == true
+                  ? 'The app could not tell whether the measurement microphone '
+                      'is plugged in — asking Android for the audio devices '
+                      'failed or timed out. That often clears by itself after '
+                      'unplugging and replugging the UMIK-1.\n\n'
+                      'You can measure anyway; if the mic really is connected '
+                      'it will still be used.'
+                  : 'The measurement microphone is not plugged in, so the phone '
+                      'would record with its own — which is not calibrated and '
+                      'is not where you sit. The result would not describe your '
+                      'car.\n\nPlug it in over USB OTG, or carry on if you are '
+                      'just trying the app out.'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(ctx, false),
