@@ -240,6 +240,12 @@ class WizardController extends ChangeNotifier {
 
   /// Most recent per-driver measurement + its crossover recommendation.
   FreqResponse? lastDriverMeasurement;
+
+  /// Distortion from the soloed-driver measurement. This is where it matters
+  /// most: a single driver on its own is where you find out that the door
+  /// speaker breaking up at 80 Hz is not a dip to equalise but a driver already
+  /// at its limit.
+  DistortionAnalysis? lastDriverDistortion;
   CrossoverRecommendation? lastCrossoverRec;
 
   // --- live mic check -------------------------------------------------------
@@ -488,6 +494,7 @@ class WizardController extends ChangeNotifier {
       final m = await service.measureOnce(band: band);
       final fr = m.response;
       lastDriverMeasurement = fr;
+      lastDriverDistortion = m.distortion;
       lastCrossoverRec = service.recommendCrossover(fr);
       project.measured[channelId] = fr;
       project.levelsDbfs[channelId] = m.levelDbfs;

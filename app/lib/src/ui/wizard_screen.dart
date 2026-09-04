@@ -315,6 +315,9 @@ class _WizardScreenState extends State<WizardScreen> {
       builder: (_) => MeasurementDetailScreen(
         store: c.store,
         core: c.service.core,
+        distortion: c.lastDriverDistortion,
+        rawCapture: c.service.lastRawCapture,
+        libraryPath: c.service.libraryPath,
         title: '${c.project.name} — ${ch.name}',
         subtitle: '${c.band.label} · '
             '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
