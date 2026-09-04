@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../app_services.dart';
 import '../models/project.dart';
-import '../wizard/rta_controller.dart';
-import 'rta_screen.dart';
+import '../mcp/mcp_server.dart';
+import '../mcp/mcp_tools.dart';
+import '../models/measurement.dart';
 import '../services/measurement_service.dart';
+import '../wizard/rta_controller.dart';
+import 'mcp_screen.dart';
+import 'rta_screen.dart';
 import '../wizard/wizard_controller.dart';
 import 'wizard_screen.dart';
 
@@ -37,10 +41,27 @@ class _HomeScreenState extends State<HomeScreen> {
       audio: widget.services.audio,
       core: widget.services.core,
     );
+    _rta = controller;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => RtaScreen(controller: controller)),
     );
+    _rta = null;
     controller.dispose();
+  }
+
+  /// Held only while the analyser screen is open, so the MCP `get_rta` tool can
+  /// report what it is showing.
+  RtaController? _rta;
+
+  McpServer? _mcp;
+
+  Future<void> _openMcp() async {
+    _mcp ??= McpServer(
+      tools: buildTools(_AppMcpContext(widget.services, () => _rta)),
+    );
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => McpScreen(server: _mcp!)),
+    );
   }
 
   Future<void> _openWizard(TuneProject project) async {
@@ -98,6 +119,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.graphic_eq),
             onPressed: _openRta,
           ),
+          IconButton(
+            tooltip: 'Connect an assistant',
+            icon: const Icon(Icons.hub_outlined),
+            onPressed: _openMcp,
+          ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -142,4 +168,41 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+/// Bridges the MCP tools to the app's own services. Read-mostly by design:
+/// the only thing here with a physical effect is [measure].
+class _AppMcpContext implements McpContext {
+  _AppMcpContext(this.services, this.rtaFor);
+
+  final AppServices services;
+  final RtaController? Function() rtaFor;
+
+  @override
+  Future<List<TuneProject>> listTunes() => services.store.list();
+
+  @override
+  Future<TuneProject?> getTune(String id) async {
+    final all = await services.store.list();
+    for (final t in all) {
+      if (t.id == id) return t;
+    }
+    return null;
+  }
+
+  @override
+  Future<Measurement> measure({String? tuneId, int positions = 3}) async {
+    final service = MeasurementService(services.core, services.audio);
+    return service.measureAveraged(positions);
+  }
+
+  @override
+  FreqResponse? rtaSpectrum() {
+    final rta = rtaFor();
+    if (rta == null || rta.spectrum.isEmpty) return null;
+    return rta.spectrum;
+  }
+
+  @override
+  double? rtaLevelDbfs() => rtaFor()?.levelDbfs;
 }

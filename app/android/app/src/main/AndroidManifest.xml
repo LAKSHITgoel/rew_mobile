@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Measurement mic (UMIK-1) over USB OTG. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Needed to serve MCP on the local network. Flutter only adds INTERNET to
+         the debug manifest, so without this a release build cannot open the
+         socket at all: "Permission denied, errno = 13". -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <application
         android:label="rew_mobile"

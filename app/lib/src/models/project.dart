@@ -37,6 +37,7 @@ class TuneProject {
     required this.name,
     required this.createdAt,
     Map<String, FreqResponse>? measured,
+    Map<String, FreqResponse>? noiseFloors,
     Map<String, List<PeqBand>>? eqBands,
     List<CrossoverSetting>? crossovers,
     Map<String, double>? delaysMs,
@@ -44,6 +45,7 @@ class TuneProject {
     this.splOffsetDb,
     this.setup = const CarSetup(),
   })  : measured = measured ?? {},
+        noiseFloors = noiseFloors ?? {},
         eqBands = eqBands ?? {},
         crossovers = crossovers ?? [],
         delaysMs = delaysMs ?? {},
@@ -55,6 +57,11 @@ class TuneProject {
 
   /// Measured response per channel id (and 'system' for the full-system verify).
   final Map<String, FreqResponse> measured;
+
+  /// The noise floor captured alongside each measurement, on the same grid.
+  /// Saved because without it a stored curve cannot be judged later: there is
+  /// no way to tell which part of it was the car and which was the car's noise.
+  final Map<String, FreqResponse> noiseFloors;
 
   /// Recommended parametric EQ bands per channel id.
   final Map<String, List<PeqBand>> eqBands;
@@ -91,6 +98,7 @@ class TuneProject {
         'createdAt': createdAt.toIso8601String(),
         'measured':
             measured.map((k, v) => MapEntry(k, v.toJson())),
+        'noiseFloors': noiseFloors.map((k, v) => MapEntry(k, v.toJson())),
         'eqBands': eqBands.map(
             (k, v) => MapEntry(k, v.map((b) => b.toJson()).toList())),
         'crossovers': crossovers.map((c) => c.toJson()).toList(),
@@ -103,23 +111,31 @@ class TuneProject {
         'setup': setup.toJson(),
       };
 
+  /// Tolerant by necessity: FileProjectStore skips any file that fails to
+  /// parse, so a model change that throws here does not crash the app — it
+  /// silently loses the user's saved tunes. A missing key must always fall back
+  /// to a correctly typed empty value, never to a bare `{}`, which is a
+  /// Map<dynamic, dynamic> and fails the cast.
   factory TuneProject.fromJson(Map<String, dynamic> j) => TuneProject(
         id: j['id'] as String,
         name: j['name'] as String,
         createdAt: DateTime.parse(j['createdAt'] as String),
-        measured: (j['measured'] as Map<String, dynamic>).map(
+        measured: ((j['measured'] as Map?) ?? const {}).cast<String, dynamic>().map(
             (k, v) => MapEntry(k, FreqResponse.fromJson(v as Map<String, dynamic>))),
-        eqBands: (j['eqBands'] as Map<String, dynamic>).map((k, v) => MapEntry(
+        noiseFloors: (((j['noiseFloors'] as Map?) ?? const {}).cast<String, dynamic>()).map(
+            (k, v) =>
+                MapEntry(k, FreqResponse.fromJson(v as Map<String, dynamic>))),
+        eqBands: ((j['eqBands'] as Map?) ?? const {}).cast<String, dynamic>().map((k, v) => MapEntry(
             k,
             (v as List)
                 .map((b) => PeqBand.fromJson(b as Map<String, dynamic>))
                 .toList())),
-        crossovers: (j['crossovers'] as List)
+        crossovers: ((j['crossovers'] as List?) ?? const [])
             .map((c) => CrossoverSetting.fromJson(c as Map<String, dynamic>))
             .toList(),
-        delaysMs: ((j['delaysMs'] ?? {}) as Map<String, dynamic>)
+        delaysMs: (((j['delaysMs'] as Map?) ?? const {}).cast<String, dynamic>())
             .map((k, v) => MapEntry(k, (v as num).toDouble())),
-        levelsDbfs: ((j['levelsDbfs'] ?? {}) as Map<String, dynamic>)
+        levelsDbfs: (((j['levelsDbfs'] as Map?) ?? const {}).cast<String, dynamic>())
             .map((k, v) => MapEntry(k, (v as num).toDouble())),
         splOffsetDb: (j['splOffsetDb'] as num?)?.toDouble(),
         setup: CarSetup.fromJson(

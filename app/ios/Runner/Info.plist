@@ -28,6 +28,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Lets an AI assistant on your computer read measurements from this app over your local network.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Used to measure your car's sound with the UMIK-1 microphone.</string>
 	<key>UIApplicationSceneManifest</key>

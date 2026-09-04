@@ -43,6 +43,7 @@ class WizardController extends ChangeNotifier {
       lastMeasurementFull = Measurement(
         response: saved,
         levelDbfs: project.levelsDbfs['system'] ?? 0,
+        noiseFloor: project.noiseFloors['system'],
       );
     }
     targetPreset = TargetPreset.values.firstWhere(
@@ -404,6 +405,7 @@ class WizardController extends ChangeNotifier {
       lastMeasurementFull = m;
       lastEq = eq;
       project.measured['system'] = fr;
+      if (m.noiseFloor != null) project.noiseFloors['system'] = m.noiseFloor!;
       project.levelsDbfs['system'] = m.levelDbfs;
       project.eqBands['system'] = eq.bands;
       await store.save(project);
@@ -426,6 +428,7 @@ class WizardController extends ChangeNotifier {
       final m = await service.measureAveraged(averagingPositions, band: band);
       lastMeasurement = m.response;
       project.measured['verify'] = m.response;
+      if (m.noiseFloor != null) project.noiseFloors['verify'] = m.noiseFloor!;
       project.levelsDbfs['verify'] = m.levelDbfs;
       await store.save(project);
       status = 'Verify measurement saved.';

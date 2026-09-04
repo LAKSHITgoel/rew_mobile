@@ -398,12 +398,24 @@ class PeqBand {
   final double gainDb;
   final double q;
 
-  Map<String, dynamic> toJson() => {'freqHz': freqHz, 'gainDb': gainDb, 'q': q};
+  // The reason and confidence are saved with the band. Without them a reopened
+  // tune could still be typed into a DSP but no longer explained — and anything
+  // reviewing it later, human or model, would be told "unclassified" for
+  // recommendations the app had perfectly good grounds for.
+  Map<String, dynamic> toJson() => {
+        'freqHz': freqHz,
+        'gainDb': gainDb,
+        'q': q,
+        'reason': reason.code,
+        'confidence': confidence,
+      };
 
   factory PeqBand.fromJson(Map<String, dynamic> j) => PeqBand(
         freqHz: (j['freqHz'] as num).toDouble(),
         gainDb: (j['gainDb'] as num).toDouble(),
         q: (j['q'] as num).toDouble(),
+        reason: peqReasonFromCode((j['reason'] as num?)?.toInt() ?? 0),
+        confidence: (j['confidence'] as num?)?.toDouble() ?? 0,
       );
 }
 
