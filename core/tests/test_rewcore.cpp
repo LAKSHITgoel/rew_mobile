@@ -11,6 +11,7 @@
 #include "rewcore/dsp.hpp"
 #include "rewcore/fft.hpp"
 #include "rewcore/peq.hpp"
+#include "rewcore/distortion.hpp"
 #include "rewcore/rta.hpp"
 #include "rewcore/wav.hpp"
 #include "rewcore_ffi.h"
@@ -501,6 +502,88 @@ static void testConfidenceAndRepeatability() {
   // annihilated.
   CHECK(b.rationale[0].confidence > 0.25);
   CHECK(b.rationale[0].confidence < 0.7);
+}
+
+static void testHarmonicDistortion() {
+  std::printf("test: harmonic distortion pulled out of the same sweep\n");
+  SweepSpec spec;
+  spec.fs = 48000;
+  spec.f1 = 20;
+  spec.f2 = 20000;
+  spec.durationSec = 4.0;
+  const std::vector<double> sweep = generateExpSweep(spec);
+
+  DistortionSpec dspec;
+  dspec.fs = spec.fs;
+  dspec.f1 = spec.f1;
+  dspec.f2 = spec.f2;
+  dspec.durationSec = spec.durationSec;
+  dspec.maxHarmonic = 3;
+  dspec.points = 64;
+
+  // A clean path first: nothing added, so there should be nothing to find.
+  const DistortionResult clean = analyzeDistortion(sweep, sweep, dspec);
+  CHECK(clean.valid);
+  CHECK(clean.harmonics.size() == 2);
+  std::printf("  clean path: worst THD %.3f%%\n", clean.worstThdPercent);
+  CHECK(clean.worstThdPercent < 1.0);
+
+  // Now a known squarer. For x = A sin(t), a2*x^2 produces a second harmonic of
+  // amplitude a2*A^2/2, so relative to the fundamental it is a2*A/2. With the
+  // sweep at amplitude A and a2 chosen below, that is a distortion of about 5%.
+  const double a2 = 0.10;
+  double peakAmp = 0.0;
+  for (double v : sweep) peakAmp = std::max(peakAmp, std::fabs(v));
+  std::vector<double> distorted(sweep.size());
+  for (std::size_t i = 0; i < sweep.size(); ++i) {
+    distorted[i] = sweep[i] + a2 * sweep[i] * sweep[i];
+  }
+  const double expectedPercent = 100.0 * a2 * peakAmp / 2.0;
+
+  const DistortionResult d = analyzeDistortion(sweep, distorted, dspec);
+  CHECK(d.valid);
+  std::printf("  squarer: expected about %.1f%%, worst measured %.1f%% at "
+              "%.0f Hz\n",
+              expectedPercent, d.worstThdPercent, d.worstThdHz);
+  // Distortion must be found, in the right region, and of the right order of
+  // size. An exact match is not the claim: the gate, the window and the log
+  // grid all move it a little.
+  CHECK(d.worstThdPercent > clean.worstThdPercent * 3.0);
+  CHECK(d.worstThdPercent > expectedPercent * 0.3);
+  CHECK(d.worstThdPercent < expectedPercent * 3.0);
+
+  // A squarer makes a second harmonic and essentially no third, which is the
+  // check that the harmonics are being told apart rather than smeared.
+  double h2 = -240.0, h3 = -240.0;
+  for (std::size_t i = 0; i < d.fundamental.freqHz.size(); ++i) {
+    const double f = d.fundamental.freqHz[i];
+    if (f < 200.0 || f > 2000.0) continue;
+    h2 = std::max(h2, d.harmonics[0].magDb[i] - d.fundamental.magDb[i]);
+    h3 = std::max(h3, d.harmonics[1].magDb[i] - d.fundamental.magDb[i]);
+  }
+  std::printf("  squarer: H2 %.1f dB, H3 %.1f dB below the fundamental\n",
+              h2, h3);
+  CHECK(h2 > h3 + 6.0);
+
+  // And a cuber makes a third rather than a second.
+  std::vector<double> cubed(sweep.size());
+  for (std::size_t i = 0; i < sweep.size(); ++i) {
+    cubed[i] = sweep[i] + 0.30 * sweep[i] * sweep[i] * sweep[i];
+  }
+  const DistortionResult c = analyzeDistortion(sweep, cubed, dspec);
+  CHECK(c.valid);
+  double c2 = -240.0, c3 = -240.0;
+  for (std::size_t i = 0; i < c.fundamental.freqHz.size(); ++i) {
+    const double f = c.fundamental.freqHz[i];
+    if (f < 200.0 || f > 2000.0) continue;
+    c2 = std::max(c2, c.harmonics[0].magDb[i] - c.fundamental.magDb[i]);
+    c3 = std::max(c3, c.harmonics[1].magDb[i] - c.fundamental.magDb[i]);
+  }
+  std::printf("  cuber: H2 %.1f dB, H3 %.1f dB below the fundamental\n", c2, c3);
+  CHECK(c3 > c2 + 6.0);
+
+  // Nothing to work with is reported as nothing, not guessed at.
+  CHECK(!analyzeDistortion({}, {}, dspec).valid);
 }
 
 static void testPolarityAndSummation() {
@@ -1311,6 +1394,7 @@ int main() {
   testConfidenceAndRepeatability();
   testResponseSpread();
   testCaptureQuality();
+  testHarmonicDistortion();
   testPolarityAndSummation();
   testRtaLevels();
   testRtaPinkWeightingAndPeakHold();

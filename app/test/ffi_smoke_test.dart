@@ -106,6 +106,65 @@ void main() {
     expect(plain.magDb[mid] - calibrated.magDb[mid], closeTo(3.0, 0.3));
   });
 
+  test('rew_distortion finds a known nonlinearity across the real ABI', () {
+    const fs = 48000.0;
+    const f1 = 30.0, f2 = 16000.0, dur = 3.0;
+    final sweep =
+        core.generateSweep(fs: fs, f1: f1, f2: f2, durationSec: dur);
+
+    // A squarer: for x = A sin, the second harmonic is a2*A/2 of the
+    // fundamental, and there is no third.
+    const a2 = 0.10;
+    final distorted = Float64List(sweep.length);
+    for (var i = 0; i < sweep.length; i++) {
+      distorted[i] = sweep[i] + a2 * sweep[i] * sweep[i];
+    }
+
+    final d = core.analyzeDistortion(
+        emitted: sweep,
+        recorded: distorted,
+        fs: fs,
+        f1: f1,
+        f2: f2,
+        durationSec: dur,
+        fMin: 50,
+        fMax: 5000,
+        points: 48);
+    expect(d.isEmpty, isFalse);
+    expect(d.harmonics.length, 4); // 2nd through 5th
+    expect(d.fundamental.length, d.thdPercent.length);
+
+    // Something was found, and it is the second harmonic rather than the third
+    // — which is the check that the stacked output buffer is being unpacked in
+    // the right order.
+    expect(d.worstThdPercent, greaterThan(1.0));
+    var h2 = -240.0, h3 = -240.0;
+    for (var i = 0; i < d.fundamental.length; i++) {
+      final f = d.fundamental.freqHz[i];
+      if (f < 200 || f > 2000) continue;
+      h2 = h2 > d.harmonics[0].magDb[i] - d.fundamental.magDb[i]
+          ? h2
+          : d.harmonics[0].magDb[i] - d.fundamental.magDb[i];
+      h3 = h3 > d.harmonics[1].magDb[i] - d.fundamental.magDb[i]
+          ? h3
+          : d.harmonics[1].magDb[i] - d.fundamental.magDb[i];
+    }
+    expect(h2, greaterThan(h3 + 6));
+
+    // A clean path through the same call reports essentially nothing.
+    final clean = core.analyzeDistortion(
+        emitted: sweep,
+        recorded: sweep,
+        fs: fs,
+        f1: f1,
+        f2: f2,
+        durationSec: dur,
+        fMin: 50,
+        fMax: 5000,
+        points: 48);
+    expect(clean.worstThdPercent, lessThan(1.0));
+  });
+
   test('measureFr returns unwrapped phase for a known delay', () {
     const fs = 48000.0;
     final sweep = core.generateSweep(fs: fs, f1: 50, f2: 18000, durationSec: 1);

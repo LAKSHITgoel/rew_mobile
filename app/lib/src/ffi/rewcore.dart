@@ -171,6 +171,94 @@ class Rewcore {
     }
   }
 
+  /// Harmonic distortion, pulled out of a sweep that has already been captured.
+  ///
+  /// Costs nothing extra to measure — it is the same sweep the response came
+  /// from — but it answers a different question: not what the system's balance
+  /// is, but whether anything in it is being asked for more than it can give.
+  /// [f1], [f2] and [durationSec] must describe the sweep as it was generated;
+  /// the harmonics' positions in time are derived from them, so a mismatch puts
+  /// every gate in the wrong place.
+  DistortionAnalysis analyzeDistortion({
+    required Float64List emitted,
+    required Float64List recorded,
+    double fs = 48000,
+    double f1 = 18,
+    double f2 = 22000,
+    required double durationSec,
+    int maxHarmonic = 5,
+    double fMin = 20,
+    double fMax = 20000,
+    int points = 96,
+  }) {
+    final harmonicCount = maxHarmonic - 1;
+    if (harmonicCount < 1) return const DistortionAnalysis.empty();
+
+    final em = calloc<ffi.Double>(emitted.length);
+    final rec = calloc<ffi.Double>(recorded.length);
+    final freqOut = calloc<ffi.Double>(points);
+    final fundOut = calloc<ffi.Double>(points);
+    final harmOut = calloc<ffi.Double>(points * harmonicCount);
+    final thdOut = calloc<ffi.Double>(points);
+    final worstOut = calloc<ffi.Double>(2);
+    try {
+      em.asTypedList(emitted.length).setAll(0, emitted);
+      rec.asTypedList(recorded.length).setAll(0, recorded);
+      final req = calloc<RewDistortionRequest>();
+      try {
+        req.ref
+          ..emitted = em
+          ..recorded = rec
+          ..emittedLen = emitted.length
+          ..recordedLen = recorded.length
+          ..fs = fs
+          ..f1 = f1
+          ..f2 = f2
+          ..durationSec = durationSec
+          ..fMin = fMin
+          ..fMax = fMax
+          ..maxHarmonic = maxHarmonic
+          ..points = points
+          ..freqOut = freqOut
+          ..fundamentalOut = fundOut
+          ..harmonicsOut = harmOut
+          ..thdPercentOut = thdOut
+          ..worstOut = worstOut
+          ..cap = points;
+        final n = _b.rewDistortion(req);
+        if (n == 0) return const DistortionAnalysis.empty();
+        final freq = List<double>.from(freqOut.asTypedList(n));
+        final harmonics = <FreqResponse>[
+          for (var h = 0; h < harmonicCount; ++h)
+            FreqResponse(
+              freq,
+              List<double>.from(
+                  harmOut.asTypedList(n * harmonicCount).sublist(h * n, h * n + n)),
+            ),
+        ];
+        return DistortionAnalysis(
+          fundamental:
+              FreqResponse(freq, List<double>.from(fundOut.asTypedList(n))),
+          harmonics: harmonics,
+          thdPercent:
+              FreqResponse(freq, List<double>.from(thdOut.asTypedList(n))),
+          worstThdPercent: worstOut[0],
+          worstThdHz: worstOut[1],
+        );
+      } finally {
+        calloc.free(req);
+      }
+    } finally {
+      calloc.free(em);
+      calloc.free(rec);
+      calloc.free(freqOut);
+      calloc.free(fundOut);
+      calloc.free(harmOut);
+      calloc.free(thdOut);
+      calloc.free(worstOut);
+    }
+  }
+
   /// Recommend crossover edges for one measured driver response.
   CrossoverRecommendation recommendCrossover(FreqResponse driver,
       {double dropDb = 6,
@@ -242,6 +330,7 @@ class Rewcore {
       _b.rewPeqRequestSize() == ffi.sizeOf<RewPeqRequest>() &&
       _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>() &&
       _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>() &&
+      _b.rewDistortionRequestSize() == ffi.sizeOf<RewDistortionRequest>() &&
       _b.rewSummationResultSize() == ffi.sizeOf<RewSummationResult>();
 
   /// Asserts the Dart mirror of `rew_rta_config` agrees with the C struct.

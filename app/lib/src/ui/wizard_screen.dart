@@ -386,6 +386,7 @@ class _WizardScreenState extends State<WizardScreen> {
       builder: (_) => MeasurementDetailScreen(
         store: c.store,
         core: c.service.core,
+        distortion: c.lastMeasurementFull?.distortion,
         title: '${c.project.name} — ${c.band.label}',
         subtitle: '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
             'smoothing · ${measured.length} points · $cal · level $lvl$reach · '

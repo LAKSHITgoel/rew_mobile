@@ -135,6 +135,34 @@ void main() {
     expect(median, greaterThan(0));
   }, timeout: const Timeout(Duration(minutes: 3)));
 
+  test('a measurement carries distortion, analysed over the sweep that was '
+      'actually played', () async {
+    final m = await service.measureOnce(band: SweepBand.full);
+    final d = m.distortion;
+    expect(d, isNotNull, reason: 'distortion comes free with every sweep');
+    expect(d!.harmonics.length, 4); // 2nd through 5th
+    expect(d.fundamental.length, d.thdPercent.length);
+
+    // The gates are placed from the sweep's own endpoints, so the analysis has
+    // to be told the values the stimulus was generated with rather than the
+    // band it nominally covers. If those two ever drift apart, every harmonic
+    // is cut out of the wrong place and the numbers become meaningless without
+    // looking wrong.
+    final limits = service.sweepLimits(SweepBand.full);
+    expect(limits.f1, lessThan(SweepBand.full.fLo));
+    expect(limits.f2, greaterThan(SweepBand.full.fHi));
+
+    // The mock path is linear, so there is nothing real to find. What matters
+    // is that it says so rather than inventing a number.
+    expect(d.worstThdPercent, lessThan(5));
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('an averaged measurement keeps the distortion from its first sweep',
+      () async {
+    final m = await service.measureAveraged(2, band: SweepBand.full);
+    expect(m.distortion, isNotNull);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
   test('EQ never recommends a cut deeper than asked, and reports the trim',
       () async {
     // A wide bass excess, the shape that produced a -12 dB subwoofer band.

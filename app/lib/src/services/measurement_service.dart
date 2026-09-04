@@ -201,14 +201,29 @@ class MeasurementService {
 
   /// The stimulus for [band]. The swept range is deliberately a little wider than
   /// the analysed range, so the sweep's fade-in/out never lands on a band edge.
+  /// The endpoints the stimulus for [band] is actually generated with — a
+  /// little outside the band so its edges are not measured on the sweep's own
+  /// ramp. Distortion analysis has to be told the same two numbers: the
+  /// harmonics' positions in time are derived from them, and a mismatch puts
+  /// every gate in the wrong place. So both read it from here rather than each
+  /// recomputing it.
+  ({double f1, double f2}) sweepLimits(SweepBand band) {
+    final fs = config.fs;
+    return (
+      f1: (band.fLo / 1.1).clamp(10.0, fs / 2),
+      f2: (band.fHi * 1.1).clamp(20.0, fs * 0.45),
+    );
+  }
+
   Future<Float64List> sweepFor(SweepBand band) {
     // On failure the entry is dropped: a cached rejected Future would make every
     // later measurement fail identically until the app was restarted.
     return _sweeps.putIfAbsent(band.label, () {
       final fs = config.fs;
       final dur = config.durationSec;
-      final f1 = (band.fLo / 1.1).clamp(10.0, fs / 2);
-      final f2 = (band.fHi * 1.1).clamp(20.0, fs * 0.45);
+      final limits = sweepLimits(band);
+      final f1 = limits.f1;
+      final f2 = limits.f2;
       final lib = libraryPath;
       final future = Isolate.run(() => Rewcore.open(libraryPath: lib)
           .generateSweep(fs: fs, f1: f1, f2: f2, durationSec: dur));
@@ -309,6 +324,12 @@ class MeasurementService {
     final fHi = band.fHi;
     final cal = calibration;
     final lib = libraryPath;
+    // The sweep as generated: the harmonics' positions in time follow from
+    // these, so they have to be the values the stimulus was actually made with.
+    final limits = sweepLimits(band);
+    final f1 = limits.f1;
+    final f2 = limits.f2;
+    final dur = config.durationSec;
 
     return Isolate.run(() {
       final core = Rewcore.open(libraryPath: lib);
@@ -323,6 +344,18 @@ class MeasurementService {
       }
 
       final level = core.rmsDbfs(recorded);
+
+      // Distortion comes out of the sweep that was just captured, so it costs
+      // one more analysis pass and no extra time in the car.
+      final distortion = core.analyzeDistortion(
+        emitted: stimulus,
+        recorded: recorded,
+        fs: fs,
+        f1: f1,
+        f2: f2,
+        durationSec: dur,
+        points: pts,
+      );
       final curves = core.measureCurves(
         emitted: stimulus,
         recorded: recorded,
@@ -338,6 +371,7 @@ class MeasurementService {
           analysis: curves.analysis,
           levelDbfs: level,
           noiseFloor: noiseFloor,
+          distortion: distortion.isEmpty ? null : distortion,
           quality: quality);
     });
   }
@@ -378,11 +412,18 @@ class MeasurementService {
     final all = <FreqResponse>[];
     final allAnalysis = <FreqResponse>[];
     var levelSum = 0.0;
+    // Distortion from the first sweep, kept as measured rather than averaged
+    // with the rest. Harmonic level relative to the fundamental barely changes
+    // as the microphone moves — both rise and fall together — so averaging
+    // would buy very little, and combining the curves here would mean writing
+    // the arithmetic in Dart, where measurement maths does not belong.
+    DistortionAnalysis? distortion;
     final passes = repeats < 1 ? 1 : repeats;
     for (var i = 0; i < n; i++) {
       for (var r = 0; r < passes; r++) {
         onPhase?.call(MeasurePhase.sweep, i * passes + r, n * passes);
         final m = await measureOnce(band: band);
+        distortion ??= m.distortion;
         all.add(m.response);
         allAnalysis.add(m.analysisResponse);
         levelSum += m.levelDbfs;
@@ -409,6 +450,7 @@ class MeasurementService {
         analysis: _powerAverage(allAnalysis),
         levelDbfs: levelSum / all.length,
         noiseFloor: noise,
+        distortion: distortion,
         spreadDb: spread);
   }
 

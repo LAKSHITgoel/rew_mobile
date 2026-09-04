@@ -248,6 +248,44 @@ REW_EXPORT int rew_analyze_summation(const double* freq, const double* aMag,
 REW_EXPORT size_t rew_summation_result_size(void);
 
 // ---------------------------------------------------------------------------
+// Harmonic distortion, from the same sweep as the response.
+//
+// One call fills several curves at once — the fundamental, each harmonic, and
+// THD — all on the same frequency grid, so the caller allocates one freq array
+// and one magnitude array per curve. Harmonics come back stacked in a single
+// buffer: harmonic h occupies harmonicsOut[(h - 2) * n .. (h - 2) * n + n).
+// ---------------------------------------------------------------------------
+typedef struct rew_distortion_request {
+  const double* emitted;
+  const double* recorded;
+  size_t emittedLen;
+  size_t recordedLen;
+  double fs;
+  double f1;           // sweep start, as generated
+  double f2;           // sweep end
+  double durationSec;
+  double fMin;
+  double fMax;
+  int maxHarmonic;     // 2..8; 0 keeps the default (5)
+  int reserved_;
+  size_t points;       // 0 keeps the default
+
+  double* freqOut;        // n points
+  double* fundamentalOut; // n points, dB
+  double* harmonicsOut;   // (maxHarmonic - 1) * n points, dB, 2nd first
+  double* thdPercentOut;  // n points, percent
+  double* worstOut;       // optional, 2 doubles: {worstPercent, worstHz}
+  size_t cap;             // capacity of freqOut, in points
+} rew_distortion_request;
+
+// Returns the number of points written per curve, or 0 if the analysis could
+// not be done.
+REW_EXPORT size_t rew_distortion(const rew_distortion_request* req);
+
+// sizeof(rew_distortion_request), so a binding can assert its layout agrees.
+REW_EXPORT size_t rew_distortion_request_size(void);
+
+// ---------------------------------------------------------------------------
 // Real-time analyser.
 //
 // Stateful, unlike everything else here: it accumulates blocks, overlaps and

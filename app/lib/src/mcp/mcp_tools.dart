@@ -218,8 +218,8 @@ List<McpTool> buildTools(McpContext ctx) => [
         description:
             'Run a real measurement now: plays a sweep through the car and '
             'captures it with the USB microphone. This makes sound. Returns '
-            'the response, the noise floor, the usable bandwidth and how '
-            'repeatable it was.',
+            'the response, the noise floor, the harmonic distortion, the '
+            'usable bandwidth and how repeatable it was.',
         inputSchema: const {
           'type': 'object',
           'properties': {
@@ -248,6 +248,25 @@ List<McpTool> buildTools(McpContext ctx) => [
                 : {
                     'fromHz': double.parse(usable.fLo.toStringAsFixed(1)),
                     'toHz': double.parse(usable.fHi.toStringAsFixed(1)),
+                  },
+            'distortion': m.distortion == null
+                ? null
+                : {
+                    'worstThdPercent': double.parse(
+                        m.distortion!.worstThdPercent.toStringAsFixed(2)),
+                    'worstThdHz': double.parse(
+                        m.distortion!.worstThdHz.toStringAsFixed(1)),
+                    'thdPercent': _thin(m.distortion!.thdPercent),
+                    'note':
+                        'Total harmonic distortion as a percentage of the '
+                        'fundamental, against the frequency that produced it. '
+                        'Under 1% is inaudible; over 3% is heard as hardness '
+                        'or buzz; over 10% means a driver is past its limit or '
+                        'something is clipping. Where this is high, cutting is '
+                        'the right move and boosting makes it worse — a '
+                        'response dip caused by a struggling driver cannot be '
+                        'equalised away. It is a reading at the level the '
+                        'sweep was played, not a fixed property of the system.',
                   },
             'capture': m.quality == null
                 ? null

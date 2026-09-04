@@ -17,6 +17,7 @@ import '../ffi/rewcore.dart';
 import '../platform/file_picker.dart';
 import '../services/project_store.dart';
 import 'detailed_chart.dart';
+import 'distortion_screen.dart';
 import 'fullscreen_chart.dart';
 
 class MeasurementDetailScreen extends StatefulWidget {
@@ -27,6 +28,7 @@ class MeasurementDetailScreen extends StatefulWidget {
     required this.traces,
     this.store,
     this.core,
+    this.distortion,
   });
 
   final String title;
@@ -41,6 +43,11 @@ class MeasurementDetailScreen extends StatefulWidget {
 
   /// For re-smoothing on the fullscreen graph.
   final Rewcore? core;
+
+  /// Harmonic distortion from the same sweep, when there was one. Offered here
+  /// rather than shown inline: it answers a different question from the
+  /// response curve and deserves its own axes.
+  final DistortionAnalysis? distortion;
 
   @override
   State<MeasurementDetailScreen> createState() =>
@@ -356,6 +363,25 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
               label: const Text('Full screen'),
             ),
           ),
+          if (widget.distortion != null &&
+              !widget.distortion!.isEmpty) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => DistortionScreen(
+                    distortion: widget.distortion!,
+                    title: widget.title,
+                    subtitle: widget.subtitle,
+                  ),
+                )),
+                icon: const Icon(Icons.graphic_eq, size: 18),
+                label: Text('Distortion — worst '
+                    '${widget.distortion!.worstThdPercent.toStringAsFixed(1)}%'),
+              ),
+            ),
+          ],
           if (widget.store != null) ...[
             const SizedBox(height: 10),
             Align(

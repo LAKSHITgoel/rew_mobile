@@ -316,6 +316,52 @@ typedef RewRecommendCrossoverDart = int Function(
     ffi.Pointer<ffi.Double>, ffi.Pointer<ffi.Double>, int, double,
     double, double, ffi.Pointer<RewCrossoverResult>);
 
+/// Mirrors `rew_distortion_request` in core/ffi/rewcore_ffi.h. Field order and
+/// types must match exactly; see the note on [RewPeqRequest].
+final class RewDistortionRequest extends ffi.Struct {
+  external ffi.Pointer<ffi.Double> emitted;
+  external ffi.Pointer<ffi.Double> recorded;
+  @ffi.Size()
+  external int emittedLen;
+  @ffi.Size()
+  external int recordedLen;
+
+  @ffi.Double()
+  external double fs;
+  @ffi.Double()
+  external double f1;
+  @ffi.Double()
+  external double f2;
+  @ffi.Double()
+  external double durationSec;
+  @ffi.Double()
+  external double fMin;
+  @ffi.Double()
+  external double fMax;
+  @ffi.Int()
+  external int maxHarmonic;
+  @ffi.Int()
+  external int reserved;
+  @ffi.Size()
+  external int points;
+
+  external ffi.Pointer<ffi.Double> freqOut;
+  external ffi.Pointer<ffi.Double> fundamentalOut;
+  external ffi.Pointer<ffi.Double> harmonicsOut;
+  external ffi.Pointer<ffi.Double> thdPercentOut;
+  external ffi.Pointer<ffi.Double> worstOut;
+  @ffi.Size()
+  external int cap;
+}
+
+// size_t rew_distortion(const rew_distortion_request*);
+typedef _RewDistortionC = ffi.Size Function(ffi.Pointer<RewDistortionRequest>);
+typedef RewDistortionDart = int Function(ffi.Pointer<RewDistortionRequest>);
+
+// size_t rew_distortion_request_size(void);
+typedef _RewDistortionRequestSizeC = ffi.Size Function();
+typedef RewDistortionRequestSizeDart = int Function();
+
 /// Resolved function pointers for the rewcore native library.
 class RewcoreBindings {
   RewcoreBindings(ffi.DynamicLibrary lib)
@@ -355,6 +401,11 @@ class RewcoreBindings {
             RewCrossoverResultSizeDart>('rew_crossover_result_size'),
         rewMeasureRequestSize = lib.lookupFunction<_RewMeasureRequestSizeC,
             RewMeasureRequestSizeDart>('rew_measure_request_size'),
+        rewDistortion = lib
+            .lookupFunction<_RewDistortionC, RewDistortionDart>('rew_distortion'),
+        rewDistortionRequestSize = lib.lookupFunction<
+            _RewDistortionRequestSizeC,
+            RewDistortionRequestSizeDart>('rew_distortion_request_size'),
         rewFitPeq =
             lib.lookupFunction<_RewFitPeqC, RewFitPeqDart>('rew_fit_peq'),
         rewPeqRequestSize =
@@ -379,6 +430,8 @@ class RewcoreBindings {
   final RewRmsDbfsDart rewRmsDbfs;
   final RewMeasureFrDart rewMeasureFr;
   final RewMeasureRequestSizeDart rewMeasureRequestSize;
+  final RewDistortionDart rewDistortion;
+  final RewDistortionRequestSizeDart rewDistortionRequestSize;
   final RewFitPeqDart rewFitPeq;
   final RewPeqRequestSizeDart rewPeqRequestSize;
   final RewResponseSpreadDart rewResponseSpread;

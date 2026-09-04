@@ -8,6 +8,12 @@ class FreqResponse {
   FreqResponse(this.freqHz, this.magDb, [this.phaseDeg = const []])
       : assert(freqHz.length == magDb.length);
 
+  /// Nothing measured — distinct from a measurement that came back flat.
+  const FreqResponse.empty()
+      : freqHz = const [],
+        magDb = const [],
+        phaseDeg = const [];
+
   final List<double> freqHz;
   final List<double> magDb;
 
@@ -130,8 +136,16 @@ class Measurement {
     this.noiseFloor,
     this.spreadDb = const [],
     this.quality,
+    this.distortion,
     FreqResponse? analysis,
   }) : _analysis = analysis;
+
+  /// Harmonic distortion from the sweep, when it was analysed. For an averaged
+  /// measurement this is the first capture rather than a combination of them:
+  /// harmonic level relative to the fundamental hardly moves with the
+  /// microphone, so there is little to gain by averaging it. Null for anything
+  /// measured before this existed.
+  final DistortionAnalysis? distortion;
 
   /// What the raw capture looked like. Null for measurements made before this
   /// was checked.
@@ -773,4 +787,60 @@ class Channel {
     Channel('rr', 'Rear R', DriverRole.fullRange),
     Channel('sub', 'Subwoofer', DriverRole.sub),
   ];
+}
+
+/// Harmonic distortion, as it comes back from one sweep.
+///
+/// Distortion is what a magnitude response cannot show. A door speaker can
+/// measure flat at 80 Hz and still be audibly breaking up there, because the
+/// energy it is adding comes out at 160 and 240 Hz, not at 80 — where the
+/// response curve is looking. Read next to the fundamental it tells you the
+/// difference between a dip worth equalising and a driver already at its limit,
+/// which is the one case where more EQ makes things worse rather than better.
+class DistortionAnalysis {
+  const DistortionAnalysis({
+    required this.fundamental,
+    required this.harmonics,
+    required this.thdPercent,
+    required this.worstThdPercent,
+    required this.worstThdHz,
+  });
+
+  const DistortionAnalysis.empty()
+      : fundamental = const FreqResponse.empty(),
+        harmonics = const [],
+        thdPercent = const FreqResponse.empty(),
+        worstThdPercent = 0,
+        worstThdHz = 0;
+
+  /// The linear response, for reference on the same axes.
+  final FreqResponse fundamental;
+
+  /// `harmonics[0]` is the 2nd, `[1]` the 3rd, and so on. Each is plotted
+  /// against the fundamental frequency that produced it, not the frequency the
+  /// energy came out at — that is what makes them readable next to the response.
+  final List<FreqResponse> harmonics;
+
+  /// Total harmonic distortion as a percentage of the fundamental.
+  final FreqResponse thdPercent;
+
+  final double worstThdPercent;
+  final double worstThdHz;
+
+  bool get isEmpty => fundamental.isEmpty;
+
+  /// THD at a given frequency, or 0 where there is no measurement.
+  double thdAt(double hz) {
+    if (thdPercent.isEmpty) return 0;
+    var best = 0;
+    var bestDelta = double.infinity;
+    for (var i = 0; i < thdPercent.length; ++i) {
+      final d = (thdPercent.freqHz[i] - hz).abs();
+      if (d < bestDelta) {
+        bestDelta = d;
+        best = i;
+      }
+    }
+    return thdPercent.magDb[best];
+  }
 }

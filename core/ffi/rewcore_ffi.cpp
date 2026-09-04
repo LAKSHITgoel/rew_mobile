@@ -5,6 +5,7 @@
 
 #include "rewcore/calibration.hpp"
 #include "rewcore/crossover.hpp"
+#include "rewcore/distortion.hpp"
 #include "rewcore/dsp.hpp"
 #include "rewcore/peq.hpp"
 #include "rewcore/rta.hpp"
@@ -304,6 +305,50 @@ int rew_recommend_crossover(const double* freq, const double* mag, size_t n,
 }  // extern "C"
 
 // --- Real-time analyser -----------------------------------------------------
+
+size_t rew_distortion_request_size(void) {
+  return sizeof(rew_distortion_request);
+}
+
+size_t rew_distortion(const rew_distortion_request* req) {
+  if (!req || !req->emitted || !req->recorded) return 0;
+  if (!req->freqOut || req->cap == 0) return 0;
+
+  DistortionSpec spec;
+  if (req->fs > 0.0) spec.fs = req->fs;
+  if (req->f1 > 0.0) spec.f1 = req->f1;
+  if (req->f2 > 0.0) spec.f2 = req->f2;
+  if (req->durationSec > 0.0) spec.durationSec = req->durationSec;
+  if (req->fMin > 0.0) spec.fMin = req->fMin;
+  if (req->fMax > 0.0) spec.fMax = req->fMax;
+  if (req->maxHarmonic > 0) spec.maxHarmonic = req->maxHarmonic;
+  spec.points = req->points > 0 ? std::min(req->points, req->cap) : req->cap;
+
+  const std::vector<double> emitted(req->emitted, req->emitted + req->emittedLen);
+  const std::vector<double> recorded(req->recorded,
+                                     req->recorded + req->recordedLen);
+  const DistortionResult r = analyzeDistortion(emitted, recorded, spec);
+  if (!r.valid) return 0;
+
+  const size_t n = std::min(req->cap, r.fundamental.freqHz.size());
+  for (size_t i = 0; i < n; ++i) {
+    req->freqOut[i] = r.fundamental.freqHz[i];
+    if (req->fundamentalOut) req->fundamentalOut[i] = r.fundamental.magDb[i];
+    if (req->thdPercentOut) req->thdPercentOut[i] = r.thdPercent.magDb[i];
+  }
+  if (req->harmonicsOut) {
+    for (size_t h = 0; h < r.harmonics.size(); ++h) {
+      for (size_t i = 0; i < n; ++i) {
+        req->harmonicsOut[h * n + i] = r.harmonics[h].magDb[i];
+      }
+    }
+  }
+  if (req->worstOut) {
+    req->worstOut[0] = r.worstThdPercent;
+    req->worstOut[1] = r.worstThdHz;
+  }
+  return n;
+}
 
 struct rew_rta {
   explicit rew_rta(const RtaConfig& c) : impl(c) {}
