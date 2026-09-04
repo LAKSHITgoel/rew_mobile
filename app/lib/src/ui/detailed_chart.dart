@@ -10,11 +10,36 @@ import '../models/measurement.dart';
 
 class DetailedTrace {
   const DetailedTrace(this.response, this.color, this.label,
-      {this.showPhase = false});
+      {this.showPhase = false, this.dashed = false});
   final FreqResponse response;
   final Color color;
   final String label;
   final bool showPhase;
+
+  /// Drawn as a dashed line. Used for a target: it is not something that was
+  /// measured, and it should not look like it was.
+  final bool dashed;
+}
+
+/// A named frequency range worth jumping to. Reading a car measurement means
+/// looking at a few specific regions — where the sub hands over, where the
+/// windscreen reflection sits, where sibilance lives — and hunting for them by
+/// pinching every time is tedious.
+class ChartRange {
+  const ChartRange(this.label, this.fLo, this.fHi, this.why);
+  final String label;
+  final double fLo;
+  final double fHi;
+  final String why;
+
+  static const all = <ChartRange>[
+    ChartRange('Full', 20, 20000, 'The whole measured range.'),
+    ChartRange('Bass', 20, 200, 'Room modes and the sub crossover.'),
+    ChartRange('Mid-bass', 60, 500, 'Where the sub hands over to the doors.'),
+    ChartRange('Midrange', 200, 4000, 'Voices and the body of most music.'),
+    ChartRange('Presence', 1000, 8000, 'Sibilance, detail and listening fatigue.'),
+    ChartRange('Treble', 4000, 20000, 'Air, and where a wireless link gives out.'),
+  ];
 }
 
 class DetailedFrChart extends StatefulWidget {
@@ -80,6 +105,19 @@ class DetailedFrChart extends StatefulWidget {
 class _DetailedFrChartState extends State<DetailedFrChart> {
   double? _fLo, _fHi, _dbLo, _dbHi;
 
+  /// Frequency under the cursor, or null when it is not placed. A graph you can
+  /// only look at is half a tool: the question is almost always "how much, and
+  /// exactly where", and reading that off gridlines is guesswork.
+  double? _cursorHz;
+
+  /// While on, dragging moves the cursor instead of panning. Explicit rather
+  /// than clever: a drag cannot mean two things at once, and guessing wrong
+  /// makes both gestures feel broken.
+  bool _cursorMode = false;
+
+  /// Traces hidden by tapping their legend entry.
+  final Set<String> _hidden = {};
+
   // Live gesture state; the window is recomputed from the values at gesture
   // start so a pinch does not compound with itself frame to frame.
   double _fLo0 = 0, _fHi0 = 0, _dbLo0 = 0, _dbHi0 = 0;
@@ -91,6 +129,34 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
 
   bool get _zoomed =>
       _fLo != null || _fHi != null || _dbLo != null || _dbHi != null;
+
+  List<DetailedTrace> get _visible =>
+      [for (final t in widget.traces) if (!_hidden.contains(t.label)) t];
+
+  /// Value of each visible trace at the cursor, for the readout.
+  List<({DetailedTrace trace, double db})> _readout() {
+    final hz = _cursorHz;
+    if (hz == null) return const [];
+    final out = <({DetailedTrace trace, double db})>[];
+    for (final t in _visible) {
+      final fr = t.response;
+      if (fr.isEmpty) continue;
+      // Nearest point rather than interpolating: on a log grid at this density
+      // the difference is invisible, and showing a value that is not in the
+      // data would be worse than showing one that is.
+      var best = 0;
+      var err = double.infinity;
+      for (var i = 0; i < fr.length; i++) {
+        final e = (math.log(fr.freqHz[i] / hz)).abs();
+        if (e < err) {
+          err = e;
+          best = i;
+        }
+      }
+      out.add((trace: t, db: fr.magDb[best]));
+    }
+    return out;
+  }
 
   // Limits: never zoom out past the full measurement, and stop zooming in at
   // about a sixth of an octave / 5 dB, which is finer than any real feature.
@@ -108,6 +174,10 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
 
   void _onScaleUpdate(ScaleUpdateDetails d, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
+    if (_cursorMode) {
+      _setCursorFrom(d.localFocalPoint, size);
+      return;
+    }
     final fullLo = widget.fMin, fullHi = widget.fMax;
     final fullDb = widget.dbRange();
 
@@ -170,9 +240,80 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
     });
   }
 
+  /// Map an x position to a frequency, matching the painter's plot area.
+  void _setCursorFrom(Offset local, Size size) {
+    const padL = 44.0, padR = 44.0;
+    final w = size.width - padL - padR;
+    if (w <= 0) return;
+    final t = ((local.dx - padL) / w).clamp(0.0, 1.0);
+    final logLo = math.log(fLo), logHi = math.log(fHi);
+    setState(() => _cursorHz = math.exp(logLo + t * (logHi - logLo)));
+  }
+
   void _reset() => setState(() {
         _fLo = _fHi = _dbLo = _dbHi = null;
+        _cursorHz = null;
       });
+
+  Widget _chip(
+      {required String label,
+      required bool selected,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF2A4A70) : const Color(0xFF1B1F24),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: selected ? const Color(0xFF7FB2E5) : Colors.white24),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: selected ? Colors.white : Colors.white70, fontSize: 11)),
+      ),
+    );
+  }
+
+  Widget _readoutPanel() {
+    final hz = _cursorHz!;
+    final values = _readout();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xFF161A1F),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(children: [
+          Text(
+            hz >= 1000
+                ? '${(hz / 1000).toStringAsFixed(2)} kHz'
+                : '${hz.round()} Hz',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                fontFeatures: [FontFeature.tabularFigures()]),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Wrap(spacing: 12, runSpacing: 2, children: [
+              for (final v in values)
+                Text('${v.trace.label}  ${v.db.toStringAsFixed(1)} dB',
+                    style: TextStyle(
+                        color: v.trace.color,
+                        fontSize: 11,
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -213,7 +354,40 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
               child: Text(widget.subtitle,
                   style: const TextStyle(color: Colors.white70, fontSize: 11)),
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              _chip(
+                label: 'Cursor',
+                selected: _cursorMode,
+                onTap: () => setState(() {
+                  _cursorMode = !_cursorMode;
+                  if (!_cursorMode) _cursorHz = null;
+                }),
+              ),
+              const SizedBox(width: 10),
+              for (final r in ChartRange.all) ...[
+                _chip(
+                  label: r.label,
+                  selected: (fLo - r.fLo).abs() < 1 && (fHi - r.fHi).abs() < 1,
+                  onTap: () => setState(() {
+                    _fLo = r.fLo;
+                    _fHi = r.fHi;
+                    // A readout for a frequency that is no longer on screen is
+                    // just a wrong number sitting above the chart.
+                    final hz = _cursorHz;
+                    if (hz != null && (hz < r.fLo || hz > r.fHi)) {
+                      _cursorHz = null;
+                    }
+                  }),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ]),
+          ),
+          if (_cursorHz != null) _readoutPanel(),
+          const SizedBox(height: 6),
           AspectRatio(
             aspectRatio: 4 / 3,
             child: LayoutBuilder(builder: (context, box) {
@@ -224,13 +398,14 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
                 onScaleUpdate: (d) => _onScaleUpdate(d, size),
                 child: CustomPaint(
                   painter: _DetailedPainter(
-                    traces: widget.traces,
+                    traces: _visible,
                     fMin: fLo,
                     fMax: fHi,
                     dbMin: dbLo,
                     dbMax: dbHi,
                     phaseMin: widget.phaseMin,
                     phaseMax: widget.phaseMax,
+                    cursorHz: _cursorHz,
                   ),
                   size: Size.infinite,
                 ),
@@ -240,12 +415,29 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
           const SizedBox(height: 8),
           Wrap(spacing: 14, runSpacing: 4, children: [
             for (final t in widget.traces)
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(width: 16, height: 3, color: t.color),
-                const SizedBox(width: 5),
-                Text(t.label,
-                    style: const TextStyle(color: Colors.white, fontSize: 11)),
-              ]),
+              // Tapping a legend entry hides its trace. With a measured curve,
+              // a prediction, a noise floor and a target all on one chart,
+              // being able to take one away is how you actually read it.
+              GestureDetector(
+                onTap: () => setState(() {
+                  if (!_hidden.remove(t.label)) _hidden.add(t.label);
+                }),
+                child: Opacity(
+                  opacity: _hidden.contains(t.label) ? 0.35 : 1,
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Container(width: 16, height: 3, color: t.color),
+                    const SizedBox(width: 5),
+                    Text(t.label,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          decoration: _hidden.contains(t.label)
+                              ? TextDecoration.lineThrough
+                              : null,
+                        )),
+                  ]),
+                ),
+              ),
             for (final t in widget.traces.where((t) => t.showPhase))
               Row(mainAxisSize: MainAxisSize.min, children: [
                 SizedBox(
@@ -292,7 +484,10 @@ class _DetailedPainter extends CustomPainter {
     required this.dbMax,
     required this.phaseMin,
     required this.phaseMax,
+    this.cursorHz,
   });
+
+  final double? cursorHz;
 
   final List<DetailedTrace> traces;
   final double fMin, fMax, dbMin, dbMax, phaseMin, phaseMax;
@@ -407,15 +602,55 @@ class _DetailedPainter extends CustomPainter {
             size, (v, s) => _yPhase(v.clamp(phaseMin, phaseMax), s)),
             t.color.withAlpha(140));
       }
-      canvas.drawPath(
-        _buildPath(t.response.freqHz, t.response.magDb, size,
-            (v, s) => _yDb(v.clamp(dbMin, dbMax), s)),
+      final path = _buildPath(t.response.freqHz, t.response.magDb, size,
+          (v, s) => _yDb(v.clamp(dbMin, dbMax), s));
+      if (t.dashed) {
+        // A target was never measured, so it must not look like it was.
+        _dashedPath(canvas, path, t.color);
+      } else {
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = t.color
+            ..strokeWidth = 2
+            ..style = PaintingStyle.stroke
+            ..strokeJoin = StrokeJoin.round,
+        );
+      }
+    }
+
+    // Cursor last, over everything, with a dot on each trace so the readout
+    // above can be matched to the curve it came from.
+    final hz = cursorHz;
+    if (hz != null && hz >= fMin && hz <= fMax) {
+      final x = _x(hz, size);
+      canvas.drawLine(
+        Offset(x, plot.top),
+        Offset(x, plot.bottom),
         Paint()
-          ..color = t.color
-          ..strokeWidth = 2
-          ..style = PaintingStyle.stroke
-          ..strokeJoin = StrokeJoin.round,
+          ..color = Colors.white70
+          ..strokeWidth = 1,
       );
+      for (final t in traces) {
+        final fr = t.response;
+        if (fr.isEmpty) continue;
+        var best = 0;
+        var err = double.infinity;
+        for (var i = 0; i < fr.length; i++) {
+          final e = (math.log(fr.freqHz[i] / hz)).abs();
+          if (e < err) {
+            err = e;
+            best = i;
+          }
+        }
+        final v = fr.magDb[best];
+        if (v < dbMin || v > dbMax) continue;
+        canvas.drawCircle(
+          Offset(x, _yDb(v, size)),
+          3.5,
+          Paint()..color = t.color,
+        );
+      }
     }
     canvas.restore();
     canvas.drawRect(plot, Paint()

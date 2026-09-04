@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 // Plain data models shared across the app. Kept JSON-serializable so projects
 // (a saved car tune) can be persisted and reopened.
 
@@ -221,6 +223,30 @@ class TargetShape {
   final double bassShelfWidthOct;
   final double tiltDbPerOctave;
   final double tiltPivotHz;
+
+  /// The target as a curve on the same grid as a measurement, so it can be
+  /// drawn against it. Mirrors makeTarget() in core/src/peq.cpp — the shape has
+  /// to be the same one the fitter aims at, or the chart would be showing a
+  /// different promise than the app is keeping.
+  FreqResponse curveLike(FreqResponse like, {double alignAtDb = 0}) {
+    final mag = <double>[];
+    for (final f in like.freqHz) {
+      var db = 0.0;
+      if (bassShelfDb != 0 && f > 0) {
+        final width = bassShelfWidthOct <= 0 ? 0.1 : bassShelfWidthOct;
+        final x = (math.log(f / bassShelfHz) / math.ln2) / (width * 0.5);
+        // tanh, matching the core: a hard corner would hand the fitter an edge
+        // of its own making to chase.
+        final t = (math.exp(2 * x) - 1) / (math.exp(2 * x) + 1);
+        db += bassShelfDb * 0.5 * (1 - t);
+      }
+      if (tiltDbPerOctave != 0 && f > tiltPivotHz) {
+        db += tiltDbPerOctave * (math.log(f / tiltPivotHz) / math.ln2);
+      }
+      mag.add(db + alignAtDb);
+    }
+    return FreqResponse(List<double>.from(like.freqHz), mag);
+  }
 
   TargetShape copyWith({double? bassShelfDb, double? tiltDbPerOctave}) =>
       TargetShape(

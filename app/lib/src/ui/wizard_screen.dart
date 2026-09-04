@@ -338,6 +338,23 @@ class _WizardScreenState extends State<WizardScreen> {
     if (noise != null && noise.length == measured.length) {
       traces.add(DetailedTrace(noise, const Color(0xFF8A6A6A), 'Noise floor'));
     }
+
+    // The target, drawn against the measurement. Without it the chart shows
+    // where the system is but not where it is being aimed, which is half the
+    // question — and the app has been fitting to this curve all along.
+    final shape = c.targetShape;
+    if (shape.bassShelfDb != 0 || shape.tiltDbPerOctave != 0) {
+      // Sit the target on the response's own level, so the comparison is about
+      // shape rather than about how loud the measurement happened to be.
+      final sorted = [...measured.magDb]..sort();
+      final median = sorted[sorted.length ~/ 2];
+      traces.add(DetailedTrace(
+        shape.curveLike(measured, alignAtDb: median),
+        const Color(0xFF9BD17F),
+        'Target (${c.targetPreset.label})',
+        dashed: true,
+      ));
+    }
     final cal = c.hasCalibration ? 'mic-calibrated' : 'no mic calibration';
     final lvl = c.levelLabel('system');
     final usable = c.lastMeasurementFull?.usableBand();
