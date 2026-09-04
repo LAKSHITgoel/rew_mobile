@@ -15,6 +15,7 @@ import 'applied_eq_screen.dart';
 import 'detailed_chart.dart';
 import 'dsp_entry_sheet.dart';
 import 'measurement_detail_screen.dart';
+import 'polarity_screen.dart';
 import 'fr_chart.dart';
 
 class WizardScreen extends StatefulWidget {
@@ -842,6 +843,16 @@ class _WizardScreenState extends State<WizardScreen> {
                       ),
                     ),
                 ]),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PolarityScreen(controller: c),
+                    ),
+                  ),
+                  icon: const Icon(Icons.swap_vert, size: 18),
+                  label: const Text('Check polarity between two drivers'),
+                ),
                 if (rec != null) ...[
                   const SizedBox(height: 8),
                   for (final e in [

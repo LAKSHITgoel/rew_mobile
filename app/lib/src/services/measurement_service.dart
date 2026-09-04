@@ -102,6 +102,10 @@ class MeasurementService {
             Duration(seconds: (config.durationSec + 20).round());
 
   final Rewcore _core;
+
+  /// The native core, for analyses that need it directly — the polarity check
+  /// works on responses already measured, so it has nothing to capture.
+  Rewcore get core => _core;
   final AudioBackend _audio;
   /// Mutable so the user can change smoothing (and with it the point
   /// density) between measurements, the way REW lets you.

@@ -114,6 +114,114 @@ static double roundToAvailableSlope(double dbPerOct) {
   return best;
 }
 
+namespace {
+
+double dbToAmp(double db) { return std::pow(10.0, db / 20.0); }
+double ampToDb(double a) { return a <= 1e-12 ? -240.0 : 20.0 * std::log10(a); }
+
+// Median of the loudest quarter: a driver's own passband level, robust to a
+// single peak.
+double passbandOf(const FreqResponse& fr) {
+  if (fr.magDb.empty()) return -240.0;
+  std::vector<double> sorted = fr.magDb;
+  std::sort(sorted.begin(), sorted.end());
+  const std::size_t lo = sorted.size() * 3 / 4;
+  double acc = 0.0;
+  std::size_t n = 0;
+  for (std::size_t i = lo; i < sorted.size(); ++i) {
+    acc += sorted[i];
+    ++n;
+  }
+  return n ? acc / n : sorted.back();
+}
+
+}  // namespace
+
+SummationAnalysis analyzeSummation(const FreqResponse& a, const FreqResponse& b,
+                                   const FreqResponse& both,
+                                   const FreqResponse& bothInverted,
+                                   double overlapDropDb) {
+  SummationAnalysis out;
+  const std::size_t n = a.magDb.size();
+  if (n == 0 || b.magDb.size() != n || both.magDb.size() != n) return out;
+  out.haveInverted = bothInverted.magDb.size() == n;
+
+  const double aPass = passbandOf(a);
+  const double bPass = passbandOf(b);
+
+  // The overlap: where BOTH drivers are within overlapDropDb of their own
+  // passband. Outside it one of them is not really playing, and how the pair
+  // combines there says nothing about polarity.
+  std::vector<std::size_t> idx;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (a.magDb[i] >= aPass - overlapDropDb &&
+        b.magDb[i] >= bPass - overlapDropDb) {
+      idx.push_back(i);
+    }
+  }
+  // A handful of points is not an overlap; it is a coincidence.
+  if (idx.size() < 5) return out;
+
+  out.overlapLoHz = a.freqHz[idx.front()];
+  out.overlapHiHz = a.freqHz[idx.back()];
+
+  double sumMeasured = 0.0, sumInverted = 0.0, sumCoherent = 0.0, sumPower = 0.0;
+  for (const std::size_t i : idx) {
+    const double av = dbToAmp(a.magDb[i]);
+    const double bv = dbToAmp(b.magDb[i]);
+    // Perfectly in phase: amplitudes add. Uncorrelated: powers add, which for
+    // two equal drivers is 3 dB less.
+    sumCoherent += ampToDb(av + bv);
+    sumPower += 10.0 * std::log10(av * av + bv * bv + 1e-24);
+    sumMeasured += both.magDb[i];
+    if (out.haveInverted) sumInverted += bothInverted.magDb[i];
+  }
+  const double count = static_cast<double>(idx.size());
+  out.measuredDb = sumMeasured / count;
+  out.coherentDb = sumCoherent / count;
+  out.powerDb = sumPower / count;
+  out.deficitDb = out.coherentDb - out.measuredDb;
+  if (out.haveInverted) {
+    out.invertedDb = sumInverted / count;
+    out.invertedGainDb = out.invertedDb - out.measuredDb;
+  }
+  out.valid = true;
+
+  // With both polarities measured the comparison is direct, and the only
+  // question is whether the difference is big enough to be real rather than
+  // two captures disagreeing.
+  if (out.haveInverted) {
+    const double d = out.invertedGainDb;
+    if (std::fabs(d) < 1.5) {
+      out.advice = PolarityAdvice::inconclusive;
+      out.confidence = std::clamp(1.0 - std::fabs(d) / 1.5, 0.0, 1.0) * 0.4;
+    } else if (d > 0.0) {
+      out.advice = PolarityAdvice::invert;
+      out.confidence = std::clamp(d / 8.0, 0.2, 1.0);
+    } else {
+      out.advice = PolarityAdvice::keep;
+      out.confidence = std::clamp(-d / 8.0, 0.2, 1.0);
+    }
+    return out;
+  }
+
+  // Without an inverted measurement, judge by how far short of a perfect sum
+  // the pair falls. Around 3 dB is ordinary — two drivers rarely arrive exactly
+  // in step — but a large shortfall means they are cancelling.
+  const double belowPower = out.powerDb - out.measuredDb;
+  if (belowPower > 4.0) {
+    out.advice = PolarityAdvice::suspectDestructive;
+    out.confidence = std::clamp(belowPower / 12.0, 0.2, 1.0);
+  } else {
+    out.advice = PolarityAdvice::keep;
+    // Summing at or above the uncorrelated level is as much as can be asked
+    // for; confidence grows as it approaches a perfect sum.
+    out.confidence =
+        std::clamp(1.0 - std::fabs(out.deficitDb) / 6.0, 0.2, 0.9);
+  }
+  return out;
+}
+
 CrossoverRecommendation recommendCrossover(const FreqResponse& driver,
                                            double dropDb,
                                            double targetAcousticDbPerOct,

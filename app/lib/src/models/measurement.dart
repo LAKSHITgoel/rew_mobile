@@ -536,6 +536,110 @@ class SweepBand {
 }
 
 /// Suggested crossover edges for one measured driver (from rewcore).
+/// What to do about polarity at a crossover. Mirrors rewcore::PolarityAdvice.
+enum PolarityAdvice {
+  keep(1),
+  invert(2),
+  inconclusive(3),
+  suspectDestructive(4),
+  unknown(0);
+
+  const PolarityAdvice(this.code);
+  final int code;
+
+  String get headline => switch (this) {
+        PolarityAdvice.keep => 'Polarity looks right',
+        PolarityAdvice.invert => 'Invert one of these drivers',
+        PolarityAdvice.inconclusive => 'Too close to call',
+        PolarityAdvice.suspectDestructive => 'These two are fighting each other',
+        PolarityAdvice.unknown => '',
+      };
+}
+
+PolarityAdvice polarityAdviceFromCode(int code) =>
+    PolarityAdvice.values.firstWhere((a) => a.code == code,
+        orElse: () => PolarityAdvice.unknown);
+
+/// Whether two drivers work together through their crossover.
+class SummationResult {
+  const SummationResult({
+    required this.valid,
+    required this.haveInverted,
+    required this.advice,
+    required this.overlapLoHz,
+    required this.overlapHiHz,
+    required this.measuredDb,
+    required this.invertedDb,
+    required this.coherentDb,
+    required this.powerDb,
+    required this.deficitDb,
+    required this.invertedGainDb,
+    required this.confidence,
+  });
+
+  const SummationResult.notEnoughOverlap()
+      : valid = false,
+        haveInverted = false,
+        advice = PolarityAdvice.inconclusive,
+        overlapLoHz = 0,
+        overlapHiHz = 0,
+        measuredDb = 0,
+        invertedDb = 0,
+        coherentDb = 0,
+        powerDb = 0,
+        deficitDb = 0,
+        invertedGainDb = 0,
+        confidence = 0;
+
+  final bool valid;
+  final bool haveInverted;
+  final PolarityAdvice advice;
+  final double overlapLoHz, overlapHiHz;
+  final double measuredDb, invertedDb, coherentDb, powerDb;
+  final double deficitDb, invertedGainDb, confidence;
+
+  /// What it means and what to do, in plain language.
+  String get explanation {
+    if (!valid) {
+      return 'These two drivers barely overlap, so there is nothing to say '
+          'about how they combine. Polarity only matters where both are '
+          'playing — check a pair that shares a crossover.';
+    }
+    final band = '${overlapLoHz.round()}–${overlapHiHz.round()} Hz';
+    switch (advice) {
+      case PolarityAdvice.keep:
+        return haveInverted
+            ? 'Through $band the pair is ${(-invertedGainDb).toStringAsFixed(1)} dB '
+                'louder as wired than with one inverted, so leave it alone.'
+            : 'Through $band the pair sums to within '
+                '${deficitDb.toStringAsFixed(1)} dB of a perfect sum, which is '
+                'normal. Nothing suggests a polarity problem.';
+      case PolarityAdvice.invert:
+        return 'Through $band the pair is ${invertedGainDb.toStringAsFixed(1)} dB '
+            'louder with one driver inverted. Flip the polarity of one of them '
+            'in the DSP — it does not matter which — and re-measure.';
+      case PolarityAdvice.suspectDestructive:
+        return 'Through $band the pair is ${deficitDb.toStringAsFixed(1)} dB '
+            'below what two drivers summing properly would give, so they are '
+            'partly cancelling. Measure again with one inverted to find out '
+            'whether polarity is the cause.';
+      case PolarityAdvice.inconclusive:
+        return 'Through $band the two polarities are within '
+            '${invertedGainDb.abs().toStringAsFixed(1)} dB of each other, which '
+            'is too close to call. Either is defensible; trust your ears, or '
+            'try a different crossover point.';
+      case PolarityAdvice.unknown:
+        return '';
+    }
+  }
+
+  String get strength => confidence >= 0.6
+      ? 'confident'
+      : confidence >= 0.35
+          ? 'reasonable'
+          : 'low confidence';
+}
+
 /// Why a crossover edge was placed, or why none was. Mirrors
 /// rewcore::CrossoverReason.
 enum CrossoverReason {

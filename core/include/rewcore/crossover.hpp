@@ -32,6 +32,61 @@ struct SummationCheck {
 SummationCheck checkSummation(double fc, Slope lowSlope, Slope highSlope,
                               double fMin, double fMax, int points = 200);
 
+// What to do about polarity at a crossover.
+enum class PolarityAdvice : int {
+  keep = 1,           // the drivers are summing well as wired
+  invert = 2,         // inverting one measurably improves the overlap
+  inconclusive = 3,   // not enough overlap, or the difference is within noise
+  suspectDestructive = 4,  // summing badly, but no inverted measurement to compare
+};
+
+// Whether two drivers are working together through their crossover.
+//
+// Deliberately MAGNITUDE ONLY. Absolute arrival time over a wireless link is
+// not stable enough to trust, so anything derived from measured phase would be
+// a guess dressed up as precision. This needs none of it: measure each driver
+// alone and then together, and compare what the pair actually produces in the
+// overlap against what they would produce summing perfectly. Two drivers
+// fighting each other come out far below that, and the answer does not depend
+// on when the sweep arrived.
+struct SummationAnalysis {
+  bool valid = false;
+
+  // Where both drivers genuinely contribute — outside it there is nothing to
+  // say about how they combine.
+  double overlapLoHz = 0.0;
+  double overlapHiHz = 0.0;
+
+  // Mean level through the overlap, in dB.
+  double measuredDb = 0.0;          // the pair as wired
+  double invertedDb = 0.0;          // the pair with one inverted, if measured
+  double coherentDb = 0.0;          // perfectly in phase: the best possible
+  double powerDb = 0.0;             // uncorrelated: coherent minus ~3 dB
+
+  // How far the pair falls short of summing perfectly. Around 3 dB is ordinary;
+  // much more means they are working against each other.
+  double deficitDb = 0.0;
+
+  // How much better inverting made it. Positive means inverted was louder
+  // through the overlap.
+  double invertedGainDb = 0.0;
+
+  bool haveInverted = false;
+  PolarityAdvice advice = PolarityAdvice::inconclusive;
+  double confidence = 0.0;
+};
+
+// `a` and `b` are the drivers measured alone, `both` the pair as wired, and
+// `bothInverted` the pair with one driver's polarity flipped (optional — pass an
+// empty response if it was not measured). All four must share a frequency grid.
+//
+// `overlapDropDb` sets how far below its own passband a driver may be and still
+// count as contributing.
+SummationAnalysis analyzeSummation(const FreqResponse& a, const FreqResponse& b,
+                                   const FreqResponse& both,
+                                   const FreqResponse& bothInverted,
+                                   double overlapDropDb = 10.0);
+
 // Suggested crossover edges for a single measured driver, from where its response
 // falls off relative to its passband.
 // Why an edge was placed where it was, or why none was.

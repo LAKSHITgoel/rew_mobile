@@ -59,6 +59,58 @@ final class RewCrossoverResult extends ffi.Struct {
   external double passbandDb;
 }
 
+/// Mirrors `rew_summation_result` in core/ffi/rewcore_ffi.h.
+final class RewSummationResult extends ffi.Struct {
+  @ffi.Int()
+  external int valid;
+  @ffi.Int()
+  external int haveInverted;
+  @ffi.Int()
+  external int advice;
+  @ffi.Int()
+  external int reserved;
+  @ffi.Double()
+  external double overlapLoHz;
+  @ffi.Double()
+  external double overlapHiHz;
+  @ffi.Double()
+  external double measuredDb;
+  @ffi.Double()
+  external double invertedDb;
+  @ffi.Double()
+  external double coherentDb;
+  @ffi.Double()
+  external double powerDb;
+  @ffi.Double()
+  external double deficitDb;
+  @ffi.Double()
+  external double invertedGainDb;
+  @ffi.Double()
+  external double confidence;
+}
+
+typedef _RewAnalyzeSummationC = ffi.Int Function(
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Size,
+    ffi.Double,
+    ffi.Pointer<RewSummationResult>);
+typedef RewAnalyzeSummationDart = int Function(
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    int,
+    double,
+    ffi.Pointer<RewSummationResult>);
+
+typedef _RewSummationResultSizeC = ffi.Size Function();
+typedef RewSummationResultSizeDart = int Function();
+
 // size_t rew_crossover_result_size(void);
 typedef _RewCrossoverResultSizeC = ffi.Size Function();
 typedef RewCrossoverResultSizeDart = int Function();
@@ -289,6 +341,10 @@ class RewcoreBindings {
             lib.lookupFunction<_RewRtaResetC, RewRtaResetDart>('rew_rta_reset'),
         rewRtaConfigSize = lib.lookupFunction<_RewRtaConfigSizeC,
             RewRtaConfigSizeDart>('rew_rta_config_size'),
+        rewAnalyzeSummation = lib.lookupFunction<_RewAnalyzeSummationC,
+            RewAnalyzeSummationDart>('rew_analyze_summation'),
+        rewSummationResultSize = lib.lookupFunction<_RewSummationResultSizeC,
+            RewSummationResultSizeDart>('rew_summation_result_size'),
         rewCrossoverResultSize = lib.lookupFunction<_RewCrossoverResultSizeC,
             RewCrossoverResultSizeDart>('rew_crossover_result_size'),
         rewMeasureRequestSize = lib.lookupFunction<_RewMeasureRequestSizeC,
@@ -320,6 +376,8 @@ class RewcoreBindings {
   final RewAssessCaptureDart rewAssessCapture;
   final RewRecommendCrossoverDart rewRecommendCrossover;
   final RewCrossoverResultSizeDart rewCrossoverResultSize;
+  final RewAnalyzeSummationDart rewAnalyzeSummation;
+  final RewSummationResultSizeDart rewSummationResultSize;
   final RewRtaCreateDart rewRtaCreate;
   final RewRtaDestroyDart rewRtaDestroy;
   final RewRtaPushDart rewRtaPush;

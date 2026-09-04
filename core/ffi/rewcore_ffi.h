@@ -208,6 +208,37 @@ REW_EXPORT int rew_recommend_crossover(const double* freq, const double* mag,
 // sizeof(rew_crossover_result), for the same layout assertion as the others.
 REW_EXPORT size_t rew_crossover_result_size(void);
 
+// Whether two drivers are working together through their crossover.
+//
+// Magnitude only — no phase, and no assumption that the sweep arrived when it
+// was expected to. That is what makes it usable over a wireless link, where
+// absolute arrival time is not stable enough to trust.
+typedef struct rew_summation_result {
+  int valid;
+  int haveInverted;
+  int advice;            // rewcore::PolarityAdvice
+  int reserved_;
+  double overlapLoHz;
+  double overlapHiHz;
+  double measuredDb;
+  double invertedDb;
+  double coherentDb;
+  double powerDb;
+  double deficitDb;
+  double invertedGainDb;
+  double confidence;
+} rew_summation_result;
+
+// All four responses share one frequency grid of `n` points. `bothInverted` may
+// be null if that measurement was not taken.
+REW_EXPORT int rew_analyze_summation(const double* freq, const double* aMag,
+                                     const double* bMag, const double* bothMag,
+                                     const double* bothInvertedMag, size_t n,
+                                     double overlapDropDb,
+                                     rew_summation_result* out);
+
+REW_EXPORT size_t rew_summation_result_size(void);
+
 // ---------------------------------------------------------------------------
 // Real-time analyser.
 //

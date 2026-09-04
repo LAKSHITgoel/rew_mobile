@@ -214,6 +214,43 @@ size_t rew_fit_peq(const rew_peq_request* req) {
   return res.bands.size();
 }
 
+size_t rew_summation_result_size(void) {
+  return sizeof(rew_summation_result);
+}
+
+int rew_analyze_summation(const double* freq, const double* aMag,
+                          const double* bMag, const double* bothMag,
+                          const double* bothInvertedMag, size_t n,
+                          double overlapDropDb, rew_summation_result* out) {
+  if (!freq || !aMag || !bMag || !bothMag || !out || n == 0) return 0;
+
+  auto build = [&](const double* mag) {
+    FreqResponse fr;
+    if (!mag) return fr;
+    fr.freqHz.assign(freq, freq + n);
+    fr.magDb.assign(mag, mag + n);
+    return fr;
+  };
+
+  const SummationAnalysis r = analyzeSummation(
+      build(aMag), build(bMag), build(bothMag), build(bothInvertedMag),
+      overlapDropDb > 0.0 ? overlapDropDb : 10.0);
+
+  out->valid = r.valid ? 1 : 0;
+  out->haveInverted = r.haveInverted ? 1 : 0;
+  out->advice = static_cast<int>(r.advice);
+  out->overlapLoHz = r.overlapLoHz;
+  out->overlapHiHz = r.overlapHiHz;
+  out->measuredDb = r.measuredDb;
+  out->invertedDb = r.invertedDb;
+  out->coherentDb = r.coherentDb;
+  out->powerDb = r.powerDb;
+  out->deficitDb = r.deficitDb;
+  out->invertedGainDb = r.invertedGainDb;
+  out->confidence = r.confidence;
+  return r.valid ? 1 : 0;
+}
+
 size_t rew_crossover_result_size(void) {
   return sizeof(rew_crossover_result);
 }

@@ -503,6 +503,96 @@ static void testConfidenceAndRepeatability() {
   CHECK(b.rationale[0].confidence < 0.7);
 }
 
+static void testPolarityAndSummation() {
+  std::printf("test: polarity from magnitudes alone, no phase needed\n");
+  const double fs = 48000.0;
+  const std::size_t pts = 240;
+  const double logMin = std::log(20.0), logMax = std::log(20000.0);
+  const double fc = 2000.0;
+
+  // A 2-way pair crossed at 2 kHz with LR4 filters: a woofer low-passed and a
+  // tweeter high-passed. Complex responses so the pair can be summed properly.
+  FreqResponse woofer, tweeter, sumNormal, sumInverted;
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    const double lp = lowpassMagnitude(f, fc, Slope::LinkwitzRiley24);
+    const double hp = highpassMagnitude(f, fc, Slope::LinkwitzRiley24);
+
+    woofer.freqHz.push_back(f);
+    tweeter.freqHz.push_back(f);
+    sumNormal.freqHz.push_back(f);
+    sumInverted.freqHz.push_back(f);
+
+    woofer.magDb.push_back(20.0 * std::log10(lp + 1e-12));
+    tweeter.magDb.push_back(20.0 * std::log10(hp + 1e-12));
+    // LR4 halves sum flat when in phase; inverting one produces a deep null at
+    // the crossover, which is exactly what a miswired driver does.
+    sumNormal.magDb.push_back(20.0 * std::log10(lp + hp + 1e-12));
+    sumInverted.magDb.push_back(20.0 * std::log10(std::fabs(lp - hp) + 1e-12));
+  }
+
+  // Wired correctly: keeping it must win, and clearly.
+  SummationAnalysis good =
+      analyzeSummation(woofer, tweeter, sumNormal, sumInverted);
+  CHECK(good.valid);
+  std::printf("  correct wiring: overlap %.0f-%.0f Hz, inverting would %s by "
+              "%.1f dB\n",
+              good.overlapLoHz, good.overlapHiHz,
+              good.invertedGainDb > 0 ? "help" : "hurt",
+              std::fabs(good.invertedGainDb));
+  CHECK(good.advice == PolarityAdvice::keep);
+  CHECK(good.confidence > 0.3);
+  CHECK(good.overlapLoHz < fc && good.overlapHiHz > fc);
+
+  // One driver wired backwards: the app must say so. Same data, swapped roles.
+  SummationAnalysis bad =
+      analyzeSummation(woofer, tweeter, sumInverted, sumNormal);
+  CHECK(bad.valid);
+  CHECK(bad.advice == PolarityAdvice::invert);
+  CHECK(bad.invertedGainDb > 1.5);
+  std::printf("  reversed wiring: advises inverting, worth %.1f dB\n",
+              bad.invertedGainDb);
+
+  // Without an inverted measurement, a badly cancelling pair must still be
+  // flagged rather than passed as fine.
+  FreqResponse none;
+  SummationAnalysis suspect =
+      analyzeSummation(woofer, tweeter, sumInverted, none);
+  CHECK(suspect.valid);
+  CHECK(!suspect.haveInverted);
+  CHECK(suspect.advice == PolarityAdvice::suspectDestructive);
+
+  // And a correctly wired pair, again with no inverted measurement, must not be
+  // told to go chasing a problem it does not have.
+  SummationAnalysis fine = analyzeSummation(woofer, tweeter, sumNormal, none);
+  CHECK(fine.advice == PolarityAdvice::keep);
+
+  // Drivers that barely overlap say nothing about polarity, and must not
+  // pretend otherwise.
+  FreqResponse lowOnly, highOnly, pairSum;
+  for (std::size_t i = 0; i < pts; ++i) {
+    const double t = static_cast<double>(i) / (pts - 1);
+    const double f = std::exp(logMin + t * (logMax - logMin));
+    const double lp = lowpassMagnitude(f, 120.0, Slope::LinkwitzRiley48);
+    const double hp = highpassMagnitude(f, 6000.0, Slope::LinkwitzRiley48);
+    lowOnly.freqHz.push_back(f);
+    highOnly.freqHz.push_back(f);
+    pairSum.freqHz.push_back(f);
+    lowOnly.magDb.push_back(20.0 * std::log10(lp + 1e-12));
+    highOnly.magDb.push_back(20.0 * std::log10(hp + 1e-12));
+    pairSum.magDb.push_back(20.0 * std::log10(lp + hp + 1e-12));
+  }
+  SummationAnalysis apart = analyzeSummation(lowOnly, highOnly, pairSum, none);
+  CHECK(!apart.valid);
+
+  // Mismatched grids are a caller error, not something to guess through.
+  FreqResponse shortOne;
+  shortOne.freqHz = {100.0, 200.0};
+  shortOne.magDb = {0.0, 0.0};
+  CHECK(!analyzeSummation(woofer, shortOne, sumNormal, none).valid);
+}
+
 static void testRtaLevels() {
   std::printf("test: RTA reports the right level at the right frequency\n");
   RtaConfig cfg;
@@ -1221,6 +1311,7 @@ int main() {
   testConfidenceAndRepeatability();
   testResponseSpread();
   testCaptureQuality();
+  testPolarityAndSummation();
   testRtaLevels();
   testRtaPinkWeightingAndPeakHold();
   testRtaLikeRew();

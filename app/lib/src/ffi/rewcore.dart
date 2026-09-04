@@ -241,7 +241,8 @@ class Rewcore {
   bool peqRequestLayoutMatches() =>
       _b.rewPeqRequestSize() == ffi.sizeOf<RewPeqRequest>() &&
       _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>() &&
-      _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>();
+      _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>() &&
+      _b.rewSummationResultSize() == ffi.sizeOf<RewSummationResult>();
 
   /// Asserts the Dart mirror of `rew_rta_config` agrees with the C struct.
   bool rtaConfigLayoutMatches() =>
@@ -305,6 +306,63 @@ class Rewcore {
         calloc.free(calF);
         calloc.free(calG);
       }
+    }
+  }
+
+  /// Whether two drivers work together through their crossover.
+  ///
+  /// Magnitude only, deliberately: absolute arrival time over a wireless link
+  /// is not stable enough to trust, and this needs none of it.
+  SummationResult analyzeSummation({
+    required FreqResponse a,
+    required FreqResponse b,
+    required FreqResponse both,
+    FreqResponse? bothInverted,
+    double overlapDropDb = 10,
+  }) {
+    final n = a.length;
+    if (n == 0 || b.length != n || both.length != n) {
+      return const SummationResult.notEnoughOverlap();
+    }
+    final inv = bothInverted != null && bothInverted.length == n;
+
+    final freq = calloc<ffi.Double>(n);
+    final aM = calloc<ffi.Double>(n);
+    final bM = calloc<ffi.Double>(n);
+    final bothM = calloc<ffi.Double>(n);
+    final invM = inv ? calloc<ffi.Double>(n) : ffi.nullptr;
+    final out = calloc<RewSummationResult>();
+    try {
+      freq.asTypedList(n).setAll(0, a.freqHz);
+      aM.asTypedList(n).setAll(0, a.magDb);
+      bM.asTypedList(n).setAll(0, b.magDb);
+      bothM.asTypedList(n).setAll(0, both.magDb);
+      if (inv) invM.asTypedList(n).setAll(0, bothInverted.magDb);
+
+      _b.rewAnalyzeSummation(freq, aM, bM, bothM, invM.cast<ffi.Double>(), n,
+          overlapDropDb, out);
+      final r = out.ref;
+      return SummationResult(
+        valid: r.valid != 0,
+        haveInverted: r.haveInverted != 0,
+        advice: polarityAdviceFromCode(r.advice),
+        overlapLoHz: r.overlapLoHz,
+        overlapHiHz: r.overlapHiHz,
+        measuredDb: r.measuredDb,
+        invertedDb: r.invertedDb,
+        coherentDb: r.coherentDb,
+        powerDb: r.powerDb,
+        deficitDb: r.deficitDb,
+        invertedGainDb: r.invertedGainDb,
+        confidence: r.confidence,
+      );
+    } finally {
+      calloc.free(freq);
+      calloc.free(aM);
+      calloc.free(bM);
+      calloc.free(bothM);
+      if (inv) calloc.free(invM);
+      calloc.free(out);
     }
   }
 
