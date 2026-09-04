@@ -5,9 +5,12 @@ import '../models/project.dart';
 import '../mcp/mcp_server.dart';
 import '../mcp/mcp_tools.dart';
 import '../models/measurement.dart';
+import '../models/tuning_journal.dart';
+import '../models/tuning_parameters.dart';
 import '../services/measurement_service.dart';
 import '../wizard/rta_controller.dart';
 import 'mcp_screen.dart';
+import 'parameters_screen.dart';
 import 'rta_screen.dart';
 import '../wizard/wizard_controller.dart';
 import 'wizard_screen.dart';
@@ -81,7 +84,10 @@ class _HomeScreenState extends State<HomeScreen> {
       service: MeasurementService(widget.services.core, widget.services.audio),
       store: widget.services.store,
       project: project,
+      journal: widget.services.journal,
     )..onCalibrationLoaded = (cal) => widget.services.calibration = cal;
+    await controller.loadParameters();
+    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => WizardScreen(controller: controller)),
     );
@@ -135,6 +141,16 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Connect an assistant',
             icon: const Icon(Icons.hub_outlined),
             onPressed: _openMcp,
+          ),
+          IconButton(
+            tooltip: 'How this app tunes',
+            icon: const Icon(Icons.tune),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    ParametersScreen(journal: widget.services.journal),
+              ),
+            ),
           ),
         ],
       ),
@@ -207,6 +223,17 @@ class _AppMcpContext implements McpContext {
     final service = MeasurementService(services.core, services.audio);
     return service.measureAveraged(positions);
   }
+
+  @override
+  Future<List<JournalEntry>> journal({int limit = 50}) =>
+      services.journal.entries(limit: limit);
+
+  @override
+  Future<TuningParameters> parameters() => services.journal.parameters();
+
+  @override
+  Future<void> proposeParameters(ParameterProposal proposal) =>
+      services.journal.addProposal(proposal);
 
   @override
   FreqResponse? rtaSpectrum() {

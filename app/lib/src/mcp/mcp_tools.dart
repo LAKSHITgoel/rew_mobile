@@ -11,6 +11,8 @@ import 'dart:async';
 
 import '../models/measurement.dart';
 import '../models/project.dart';
+import '../models/tuning_journal.dart';
+import '../models/tuning_parameters.dart';
 
 /// What the tools are allowed to reach. The app supplies this; tests supply a
 /// fake, which is the point of the indirection.
@@ -25,6 +27,16 @@ abstract class McpContext {
   /// The live analyser's current spectrum, if it is running.
   FreqResponse? rtaSpectrum();
   double? rtaLevelDbfs();
+
+  /// What the app recommended in past sessions, and whether it worked.
+  Future<List<JournalEntry>> journal({int limit});
+
+  /// The heuristics currently in force.
+  Future<TuningParameters> parameters();
+
+  /// Record a suggested change. Stored for the user to review and apply — it
+  /// does not take effect here.
+  Future<void> proposeParameters(ParameterProposal proposal);
 }
 
 class McpTool {
@@ -248,6 +260,151 @@ List<McpTool> buildTools(McpContext ctx) => [
                 'measurement of the car. Above that you are looking at noise, '
                 'and on a Bluetooth link the SBC codec commonly gives out '
                 'somewhere around 11 kHz.',
+          };
+        },
+      ),
+      McpTool(
+        name: 'get_tuning_parameters',
+        description:
+            'The heuristics the app currently tunes by — cut and boost limits, '
+            'the signal-to-noise gate, how repeatable a feature must be, and '
+            'so on — with the bounds each one must stay inside. These are '
+            'judgement calls, not measurement maths, which is why they are '
+            'open to revision.',
+        inputSchema: const {'type': 'object', 'properties': {}},
+        handler: (_) async {
+          final p = await ctx.parameters();
+          return {
+            'current': p.toJson(),
+            'bounds': {
+              'maxCutDb': '0 to 12',
+              'maxBoostDb': '0 to 6',
+              'targetPercentile': 'above 0, below 1',
+              'minSnrDb': '3 to 30',
+              'maxSpreadDb': 'above 0, up to 12',
+              'maxBands': '1 to 31',
+              'analysisSmoothFrac': '3 to 96',
+              'averagingPositions': '1 to 10',
+            },
+            'note':
+                'A proposal outside these bounds is refused however good the '
+                'reasoning: they are the edges of what the app will do, not '
+                'opinions open to revision.',
+          };
+        },
+      ),
+      McpTool(
+        name: 'get_tuning_journal',
+        description:
+            'What the app recommended in past sessions and how it turned out: '
+            'the parameters in force at the time, the bands, the flatness '
+            'before and after, how much of the sweep cleared the noise, and '
+            'what the fitter declined to correct. Use it to judge whether the '
+            'heuristics are serving this car well.',
+        inputSchema: const {
+          'type': 'object',
+          'properties': {
+            'limit': {'type': 'integer', 'description': 'Most recent N entries.'},
+          },
+        },
+        handler: (args) async {
+          final limit = ((args['limit'] as num?)?.toInt() ?? 50).clamp(1, 500);
+          final entries = await ctx.journal(limit: limit);
+          return {
+            'entries': [
+              for (final e in entries)
+                {
+                  'at': e.at.toIso8601String(),
+                  'event': e.event.name,
+                  'tune': e.tuneName,
+                  'target': e.targetCurve,
+                  'bands': e.bands.length,
+                  'deepestCutDb': e.bands.isEmpty
+                      ? null
+                      : e.bands
+                          .map((b) => b.gainDb)
+                          .reduce((a, b) => a < b ? a : b),
+                  'flatnessBefore': e.initialErrorDb,
+                  'flatnessAfter': e.finalErrorDb,
+                  'improved': e.improved,
+                  'levelTrimDb': e.suggestedLevelTrimDb,
+                  'usableToHz': e.usableToHz,
+                  'captureUsable': e.captureUsable,
+                  'declined': e.declined.length,
+                  'parameters': e.parameters.toJson(),
+                  if (e.note != null) 'note': e.note,
+                }
+            ],
+            'howToRead':
+                'A "recommended" entry is what the app proposed. A "verified" '
+                'entry is a fresh measurement taken after the settings were '
+                'entered, so its flatness is what the tune actually achieved. '
+                'Entries made over a narrow usable range deserve less weight: '
+                'the sweep did not clear the noise across the band.',
+          };
+        },
+      ),
+      McpTool(
+        name: 'propose_tuning_parameters',
+        description:
+            'Suggest a change to the heuristics, with your reasoning. This '
+            'does NOT take effect: it is saved for the owner to review and '
+            'apply in the app. Send the full set — start from '
+            'get_tuning_parameters and change only what the journal actually '
+            'supports changing.',
+        inputSchema: const {
+          'type': 'object',
+          'properties': {
+            'parameters': {
+              'type': 'object',
+              'description': 'The complete parameter set you propose.',
+            },
+            'rationale': {
+              'type': 'string',
+              'description':
+                  'What in the journal supports this, and what you expect it '
+                  'to improve. A proposal without an argument cannot be '
+                  'reviewed.',
+            },
+          },
+          'required': ['parameters', 'rationale'],
+        },
+        handler: (args) async {
+          final raw = (args['parameters'] as Map?)?.cast<String, dynamic>();
+          final rationale = (args['rationale'] as String? ?? '').trim();
+          if (raw == null) return {'accepted': false, 'error': 'no parameters'};
+          if (rationale.length < 20) {
+            return {
+              'accepted': false,
+              'error':
+                  'Give the reasoning: a proposal with no argument behind it '
+                  'cannot be reviewed, and would be adopted on trust.',
+            };
+          }
+          final proposed = TuningParameters.fromJson(raw);
+          final problems = proposed.problems();
+          if (problems.isNotEmpty) {
+            return {'accepted': false, 'problems': problems};
+          }
+          final current = await ctx.parameters();
+          final diff = current.diff(proposed);
+          if (diff.isEmpty) {
+            return {'accepted': false, 'error': 'identical to the current set'};
+          }
+          await ctx.proposeParameters(ParameterProposal(
+            at: DateTime.now(),
+            parameters: proposed,
+            rationale: rationale,
+          ));
+          return {
+            'accepted': true,
+            'changes': {
+              for (final e in diff.entries)
+                e.key: {'from': e.value.from, 'to': e.value.to}
+            },
+            'note':
+                'Saved as a proposal. It changes nothing until the owner '
+                'reviews and applies it in the app.',
           };
         },
       ),

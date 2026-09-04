@@ -9,6 +9,7 @@ import 'src/audio/mock_audio_backend.dart';
 import 'src/audio/native_audio_backend.dart';
 import 'src/ffi/rewcore.dart';
 import 'src/platform/file_picker.dart';
+import 'src/services/journal_store.dart';
 import 'src/services/project_store.dart';
 import 'src/ui/home_screen.dart';
 
@@ -101,7 +102,13 @@ class _BootstrapState extends State<_Bootstrap> {
     final ProjectStore store = dir == null
         ? MemoryProjectStore()
         : FileProjectStore(Directory('$dir/tunes'));
-    return AppServices(core: Rewcore.open(), audio: audio, store: store);
+    // The journal lives beside the tunes; in memory only where there is
+    // nowhere to write, which is the same rule the tunes follow.
+    final JournalStore journal =
+        dir == null ? MemoryJournalStore() : FileJournalStore(Directory(dir));
+
+    return AppServices(
+        core: Rewcore.open(), audio: audio, store: store, journal: journal);
   }
 
   @override

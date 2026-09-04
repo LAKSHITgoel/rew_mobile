@@ -12,6 +12,9 @@ import '../models/car_setup.dart';
 import '../models/project.dart';
 import '../services/measurement_service.dart';
 import '../services/time_align.dart';
+import '../models/tuning_journal.dart';
+import '../models/tuning_parameters.dart';
+import '../services/journal_store.dart';
 import '../services/project_store.dart';
 
 enum WizardStep { system, setup, crossovers, timeAlignment, eq, verify, done }
@@ -33,7 +36,8 @@ class WizardController extends ChangeNotifier {
     required this.service,
     required this.store,
     required this.project,
-  }) {
+    JournalStore? journal,
+  }) : journal = journal ?? MemoryJournalStore() {
     // Reopening a saved tune used to show the EQ table but no graph: the
     // measurement was on disk and simply never put back on screen, so the tune
     // looked half-lost. Restore what was saved.
@@ -74,6 +78,21 @@ class WizardController extends ChangeNotifier {
   /// The last system measurement including its noise floor, so the chart can
   /// show what was actually measured versus what was just noise.
   Measurement? lastMeasurementFull;
+
+  /// Where what was recommended, and whether it worked, is written down.
+  final JournalStore journal;
+
+  /// The heuristics in force. Loaded from the journal store so a change adopted
+  /// from a proposal actually takes effect.
+  TuningParameters params = TuningParameters.defaults;
+
+  Future<void> loadParameters() async {
+    params = await journal.parameters();
+    maxCutDb = params.maxCutDb;
+    eqMaxBands = params.maxBands;
+    averagingPositions = params.averagingPositions;
+    notifyListeners();
+  }
 
   /// Deepest cut any single EQ band may use. Matches what is worth typing into
   /// the DSP: past this you turn the channel down instead.
@@ -132,6 +151,35 @@ class WizardController extends ChangeNotifier {
   void setMaxCut(double db) {
     maxCutDb = db;
     notifyListeners();
+  }
+
+  Future<void> _record(JournalEvent event, Measurement m, EqResult eq,
+      {String? note}) async {
+    final usable = m.usableBand(minSnrDb: params.minSnrDb);
+    try {
+      await journal.append(JournalEntry(
+        at: DateTime.now(),
+        event: event,
+        tuneId: project.id,
+        tuneName: project.name,
+        parameters: params,
+        targetCurve: project.targetPresetName,
+        bands: eq.bands,
+        initialErrorDb: eq.initialErrorDb,
+        finalErrorDb: eq.finalErrorDb,
+        suggestedLevelTrimDb: eq.suggestedLevelTrimDb,
+        usableFromHz: usable?.fLo,
+        usableToHz: usable?.fHi,
+        levelDbfs: m.levelDbfs,
+        captureUsable: m.quality?.usable,
+        declined: [
+          for (final d in eq.declined) (reason: d.reason.code, freqHz: d.freqHz)
+        ],
+        note: note,
+      ));
+    } catch (_) {
+      // Never fail a measurement because the diary could not be written.
+    }
   }
 
   static String _hz(double f) =>
@@ -405,6 +453,7 @@ class WizardController extends ChangeNotifier {
           band: band,
           targetPercentile: eqStrength,
           maxCutDb: maxCutDb,
+          minSnrDb: params.minSnrDb,
           target: targetShape);
       lastMeasurement = fr;
       lastMeasurementFull = m;
@@ -424,6 +473,8 @@ class WizardController extends ChangeNotifier {
           : '';
       status = 'Measured ${fr.length} points; '
           '${eq.bands.length} EQ bands.$reach$trim';
+
+      await _record(JournalEvent.recommended, m, eq);
     });
   }
 
@@ -436,6 +487,21 @@ class WizardController extends ChangeNotifier {
       if (m.noiseFloor != null) project.noiseFloors['verify'] = m.noiseFloor!;
       project.levelsDbfs['verify'] = m.levelDbfs;
       await store.save(project);
+
+      // The verification pass is the only entry that can say whether any of the
+      // advice worked, so it is fitted again purely to score the result — the
+      // bands are not shown or applied.
+      final scored = await service.fitEqFor(m,
+          maxBands: eqMaxBands,
+          band: band,
+          targetPercentile: eqStrength,
+          maxCutDb: maxCutDb,
+          minSnrDb: params.minSnrDb,
+          target: targetShape);
+      await _record(JournalEvent.verified, m, scored,
+          note: 'Re-measured after the recommended settings were entered. The '
+              'remaining error is what the tune actually achieved.');
+
       status = 'Verify measurement saved.';
     });
   }
