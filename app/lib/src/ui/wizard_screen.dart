@@ -1145,6 +1145,61 @@ class _WizardScreenState extends State<WizardScreen> {
           },
         ),
         const SizedBox(height: 8),
+        const Text('Sweep length',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<SweepLength>(
+          value: c.sweepLength,
+          isExpanded: true,
+          items: [
+            for (final l in SweepLength.values)
+              DropdownMenuItem(
+                  value: l,
+                  child: Text(l.label, style: const TextStyle(fontSize: 13))),
+          ],
+          onChanged: (v) {
+            if (v != null) c.setSweepLength(v);
+          },
+        ),
+        Text(
+            '${c.sweepLength.description}\n'
+            'A longer sweep puts more energy into every frequency, so the '
+            'measurement sits further above the car\'s noise — about 3 dB for '
+            'each doubling. If a measurement came back as noise above a few '
+            'hundred hertz, this is the first thing to change.',
+            style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 8),
+        const Text('Sweeps per position',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        DropdownButton<int>(
+          value: c.repeats,
+          isExpanded: true,
+          items: const [
+            DropdownMenuItem(value: 1, child: Text('1')),
+            DropdownMenuItem(value: 2, child: Text('2')),
+            DropdownMenuItem(value: 4, child: Text('4')),
+          ],
+          onChanged: (v) {
+            if (v != null) c.setRepeats(v);
+          },
+        ),
+        Text(
+            'Repeating at the same spot averages out things that come and go — '
+            'a passing car, a fan cycling. Moving the microphone (${c.averagingPositions} '
+            'positions) averages out the room instead. They do different jobs.',
+            style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 8),
+        Text(
+            'Each measurement: ${c.averagingPositions} positions × ${c.repeats} '
+            'sweep${c.repeats == 1 ? '' : 's'} of '
+            '${c.sweepLength.seconds.toStringAsFixed(1)} s, plus one noise-floor '
+            'capture — about '
+            '${((c.averagingPositions * c.repeats + 1) * (c.sweepLength.seconds + 1.5)).round()} '
+            'seconds of measuring.',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(fontStyle: FontStyle.italic)),
+        const SizedBox(height: 8),
         const Text('Target curve',
             style: TextStyle(fontWeight: FontWeight.bold)),
         DropdownButton<TargetPreset>(

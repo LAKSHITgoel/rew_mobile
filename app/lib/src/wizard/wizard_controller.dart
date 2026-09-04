@@ -98,6 +98,26 @@ class WizardController extends ChangeNotifier {
   /// the DSP: past this you turn the channel down instead.
   double maxCutDb = 6.0;
 
+  /// How long each sweep runs. The strongest lever on whether a car
+  /// measurement clears its own noise floor.
+  SweepLength get sweepLength => SweepLength.values.firstWhere(
+        (l) => (l.seconds - service.config.durationSec).abs() < 0.05,
+        orElse: () => SweepLength.standard,
+      );
+
+  void setSweepLength(SweepLength l) {
+    service.config = service.config.copyWith(durationSec: l.seconds);
+    notifyListeners();
+  }
+
+  /// Sweeps per mic position. Averages out noise rather than the room.
+  int repeats = 1;
+
+  void setRepeats(int n) {
+    repeats = n;
+    notifyListeners();
+  }
+
   /// Whether the app explains itself in plain language or in numbers. Same
   /// findings either way — the mode changes the wording, never the advice.
   bool expertMode = false;
@@ -479,6 +499,7 @@ class WizardController extends ChangeNotifier {
       final m = await service.measureAveraged(
         averagingPositions,
         band: band,
+        repeats: repeats,
         onPhase: (phase, done, total) {
           // Say which part is running. Several seconds of silence while the
           // noise floor is captured looks like a hang otherwise.

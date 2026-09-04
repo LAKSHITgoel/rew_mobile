@@ -37,6 +37,11 @@ void main() {
       Rewcore.open(libraryPath: lib),
       MockAudioBackend(),
       libraryPath: lib,
+      // A short sweep on purpose. The app's default is 5.5 s because that is
+      // what a car needs, but every measurement here is synthetic and the
+      // suite should not spend minutes proving that a longer sweep takes
+      // longer.
+      config: const MeasurementConfig(durationSec: 1),
     );
   });
 
@@ -391,6 +396,7 @@ void main() {
       Rewcore.open(libraryPath: lib),
       _ClippedBackend(),
       libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 1),
       captureTimeout: const Duration(seconds: 30),
     );
     await expectLater(svc.measureOnce(band: SweepBand.full),
@@ -402,6 +408,7 @@ void main() {
       Rewcore.open(libraryPath: lib),
       _SilentBackend(),
       libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 1),
       captureTimeout: const Duration(seconds: 30),
     );
     try {
@@ -462,6 +469,7 @@ void main() {
       Rewcore.open(libraryPath: lib),
       _OrderRecordingBackend(order),
       libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 1),
     );
     await svc.measureAveraged(2, band: SweepBand.full);
 
@@ -490,12 +498,86 @@ void main() {
       Rewcore.open(libraryPath: lib),
       _OrderRecordingBackend(order),
       libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 1),
     );
     final m = await svc.measureAveraged(1,
         band: SweepBand.full, withNoiseFloor: false);
     expect(order, ['sweep']);
     expect(m.noiseFloor, isNull);
   }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('a longer sweep really is longer, and the old one is not reused',
+      () async {
+    // The cache is keyed by band, so changing the length without dropping it
+    // would keep playing the old sweep while the deconvolution expected the
+    // new one — a measurement of nothing that would still look plausible.
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      MockAudioBackend(),
+      libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 2),
+    );
+    final short = await svc.sweepFor(SweepBand.full);
+    expect(short.length, closeTo(2 * 48000, 100));
+
+    svc.config = svc.config.copyWith(durationSec: 8);
+    final long = await svc.sweepFor(SweepBand.full);
+    expect(long.length, closeTo(8 * 48000, 100),
+        reason: 'the cached short sweep was handed back for a long one');
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('the capture timeout follows the sweep length', () {
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      MockAudioBackend(),
+      libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 3),
+    );
+    final short = svc.captureTimeout;
+    svc.config = svc.config.copyWith(durationSec: 22);
+    // A 22 s sweep must not be abandoned as a failure before it finishes.
+    expect(svc.captureTimeout, greaterThan(short));
+    expect(svc.captureTimeout.inSeconds, greaterThan(22));
+  });
+
+  test('repeats measure the same position more than once', () async {
+    final order = <String>[];
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      _OrderRecordingBackend(order),
+      libraryPath: lib,
+      config: const MeasurementConfig(durationSec: 1),
+    );
+    await svc.measureAveraged(2, band: SweepBand.full, repeats: 3);
+    // Six sweeps — two positions, three passes each — then the noise floor.
+    expect(order.where((o) => o == 'sweep').length, 6);
+    expect(order.last, 'silence');
+  }, timeout: const Timeout(Duration(minutes: 4)));
+
+  test('the default sweep length is one the UI can name', () {
+    // The control finds the matching SweepLength for the configured duration
+    // and falls back to Standard when nothing matches — so a default that is
+    // not in the list makes the screen report a length the app is not using.
+    final configured = const MeasurementConfig().durationSec;
+    expect(
+      SweepLength.values.any((l) => (l.seconds - configured).abs() < 0.05),
+      isTrue,
+      reason: 'the default duration is not one of the offered lengths, so the '
+          'app would display one length while measuring with another',
+    );
+  });
+
+  test('sweep lengths are ordered and quantify what they buy', () {
+    expect(SweepLength.standard.seconds,
+        greaterThan(SweepLength.short.seconds));
+    // Doubling the length is about 3 dB.
+    expect(SweepLength.veryLong.snrGainOverThreeSecondsDb,
+        closeTo(8.7, 0.5));
+    expect(SweepLength.short.snrGainOverThreeSecondsDb, lessThan(0));
+    for (final l in SweepLength.values) {
+      expect(l.description, isNotEmpty);
+    }
+  });
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.

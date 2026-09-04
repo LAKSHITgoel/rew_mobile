@@ -46,7 +46,9 @@ class MeasurementConfig {
     // band edges would be a fade artifact rather than a measurement.
     this.f1 = 18,
     this.f2 = 22000,
-    this.durationSec = 3,
+    // REW's own default, and the right one for a car: three seconds put the
+    // measurement barely above the noise anywhere the room was not quiet.
+    this.durationSec = 5.5,
     this.fMin = 20,
     this.fMax = 20000,
     this.smoothFrac = 24,
@@ -76,17 +78,49 @@ class MeasurementConfig {
     return (octaves * perOctave).round().clamp(96, 2400);
   }
 
-  MeasurementConfig copyWith({double? smoothFrac, int? points}) =>
+  MeasurementConfig copyWith(
+          {double? smoothFrac, int? points, double? durationSec}) =>
       MeasurementConfig(
         fs: fs,
         f1: f1,
         f2: f2,
-        durationSec: durationSec,
+        durationSec: durationSec ?? this.durationSec,
         fMin: fMin,
         fMax: fMax,
         smoothFrac: smoothFrac ?? this.smoothFrac,
         points: points ?? (this.points > 0 ? this.points : null),
       );
+}
+
+/// How long the sweep runs for.
+///
+/// The strongest lever there is on measurement quality, and the one that was
+/// missing: a log sweep's energy at each frequency is proportional to how long
+/// it spends there, so every doubling of length buys about 3 dB of
+/// signal-to-noise after deconvolution. In a quiet room three seconds is
+/// plenty. In a car — engine, HVAC, road, and a wireless link that gives out
+/// early — it is why a measurement can come back as noise above a few hundred
+/// hertz. REW's own default sits at about five and a half seconds and it offers
+/// up to twenty-two.
+enum SweepLength {
+  short(1.4, 'Short (1.4 s)', 'Quick look. Only for a quiet car with the '
+      'engine off.'),
+  medium(2.7, 'Medium (2.7 s)', 'Reasonable indoors; marginal in a car.'),
+  standard(5.5, 'Standard (5.5 s)', 'The usual choice — about 3 dB better than '
+      'a short sweep.'),
+  long(11, 'Long (11 s)', 'About 6 dB better. Worth it when the noise floor is '
+      'close to the measurement.'),
+  veryLong(22, 'Very long (22 s)', 'About 9 dB better. For a noisy car, or to '
+      'reach the top end through a Bluetooth link.');
+
+  const SweepLength(this.seconds, this.label, this.description);
+  final double seconds;
+  final String label;
+  final String description;
+
+  /// How much quieter the noise sits relative to this sweep than to a 3 s one.
+  double get snrGainOverThreeSecondsDb =>
+      10 * (math.log(seconds / 3.0) / math.ln10);
 }
 
 /// Display/analysis smoothing, in fractions of an octave. REW offers the same
@@ -107,12 +141,12 @@ enum Smoothing {
 
 class MeasurementService {
   MeasurementService(this._core, this._audio,
-      {this.config = const MeasurementConfig(),
+      {MeasurementConfig config = const MeasurementConfig(),
       this.libraryPath,
       Duration? captureTimeout,
       this.calibration})
-      : captureTimeout = captureTimeout ??
-            Duration(seconds: (config.durationSec + 20).round());
+      : _config = config,
+        _captureTimeout = captureTimeout;
 
   final Rewcore _core;
 
@@ -120,9 +154,25 @@ class MeasurementService {
   /// works on responses already measured, so it has nothing to capture.
   Rewcore get core => _core;
   final AudioBackend _audio;
-  /// Mutable so the user can change smoothing (and with it the point
-  /// density) between measurements, the way REW lets you.
-  MeasurementConfig config;
+  MeasurementConfig _config;
+
+  /// Mutable so the user can change smoothing (and with it the point density)
+  /// and the sweep length between measurements, the way REW lets you.
+  MeasurementConfig get config => _config;
+
+  set config(MeasurementConfig next) {
+    // A cached sweep belongs to the length it was generated at. Changing the
+    // length without dropping it would keep playing the old sweep while the
+    // deconvolution expected the new one — a measurement of nothing, and one
+    // that would look plausible.
+    if (next.durationSec != _config.durationSec ||
+        next.f1 != _config.f1 ||
+        next.f2 != _config.f2 ||
+        next.fs != _config.fs) {
+      _sweeps.clear();
+    }
+    _config = next;
+  }
 
   /// Where a background isolate should load the native library from. Null means
   /// "resolve the usual way", which is what the app does on a device; tests pass
@@ -132,7 +182,12 @@ class MeasurementService {
   /// How long to wait for the backend to hand back a capture before giving up.
   /// Unbounded waiting is what left the UI stuck "busy" with a Measure button
   /// that silently ignored taps.
-  final Duration captureTimeout;
+  ///
+  /// Follows the sweep length: fixed at construction, a 22 second sweep would
+  /// be abandoned as a failure a few seconds before it finished.
+  Duration get captureTimeout =>
+      _captureTimeout ?? Duration(seconds: (config.durationSec + 20).round());
+  final Duration? _captureTimeout;
 
   /// UMIK-1 calibration applied to every measurement (null = none loaded).
   /// Supplied at construction from the app-level store, so a service built
@@ -301,9 +356,17 @@ class MeasurementService {
       _core.recommendCrossover(driver);
 
   /// Run [n] captures (e.g. around the listening position) and power-average them.
+  /// [n] mic positions, each measured [repeats] times.
+  ///
+  /// The two averages do different jobs and neither replaces the other. Moving
+  /// the microphone averages out the room — the peaks and nulls that exist at
+  /// one point in space and not the next. Repeating at one position averages
+  /// out noise: a passing car, a fan cycling, a moment of interference. REW
+  /// offers the second as its sweep repetitions.
   Future<Measurement> measureAveraged(int n,
       {SweepBand band = SweepBand.full,
       bool withNoiseFloor = true,
+      int repeats = 1,
       void Function(MeasurePhase phase, int done, int total)? onPhase}) async {
     // Sweeps first, noise floor last.
     //
@@ -315,12 +378,15 @@ class MeasurementService {
     final all = <FreqResponse>[];
     final allAnalysis = <FreqResponse>[];
     var levelSum = 0.0;
+    final passes = repeats < 1 ? 1 : repeats;
     for (var i = 0; i < n; i++) {
-      onPhase?.call(MeasurePhase.sweep, i, n);
-      final m = await measureOnce(band: band);
-      all.add(m.response);
-      allAnalysis.add(m.analysisResponse);
-      levelSum += m.levelDbfs;
+      for (var r = 0; r < passes; r++) {
+        onPhase?.call(MeasurePhase.sweep, i * passes + r, n * passes);
+        final m = await measureOnce(band: band);
+        all.add(m.response);
+        allAnalysis.add(m.analysisResponse);
+        levelSum += m.levelDbfs;
+      }
     }
 
     // Once per set: the car's noise does not change between mic positions, and
@@ -341,7 +407,7 @@ class MeasurementService {
     return Measurement(
         response: _powerAverage(all),
         analysis: _powerAverage(allAnalysis),
-        levelDbfs: levelSum / n,
+        levelDbfs: levelSum / all.length,
         noiseFloor: noise,
         spreadDb: spread);
   }
