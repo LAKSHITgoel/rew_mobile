@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../models/measurement.dart';
 import '../wizard/rta_controller.dart';
 import 'fr_chart.dart';
+import 'rta_chart.dart';
 
 class RtaScreen extends StatefulWidget {
   const RtaScreen({super.key, required this.controller});
@@ -93,6 +94,15 @@ class _RtaScreenState extends State<RtaScreen> {
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
                   child: Center(child: Text('Listening…')),
+                )
+              // Bars for bands, a line for raw FFT. A bar says "the energy in
+              // this interval", which is what a band is; a line through band
+              // values implies something continuous that was never measured.
+              else if (c.octaveBands)
+                RtaBarChart(
+                  spectrum: c.spectrum,
+                  peak: c.showPeakHold && !c.peak.isEmpty ? c.peak : null,
+                  bandsPerOctave: c.bandsPerOctave,
                 )
               else
                 FrChart(
