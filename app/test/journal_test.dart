@@ -6,6 +6,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rew_mobile/src/models/measurement.dart';
 import 'package:rew_mobile/src/models/tuning_journal.dart';
 import 'package:rew_mobile/src/models/tuning_parameters.dart';
 import 'package:rew_mobile/src/services/journal_store.dart';
@@ -106,6 +107,72 @@ void main() {
 
     await store.saveParameters(TuningParameters.defaults.copyWith(maxCutDb: 4));
     expect((await store.parameters()).maxCutDb, 4);
+  });
+
+  group('what was actually entered', () {
+    const advised = PeqBand(freqHz: 1000, gainDb: -6, q: 2);
+
+    test('a band taken as advised counts as neither changed nor skipped', () {
+      const a = AppliedBand(recommended: advised, entered: advised);
+      expect(a.unchanged, isTrue);
+      expect(a.skipped, isFalse);
+      expect(a.gainDeltaDb, 0);
+    });
+
+    test('a softened band records how far it was softened', () {
+      const a = AppliedBand(
+        recommended: advised,
+        entered: PeqBand(freqHz: 1000, gainDb: -3, q: 2),
+      );
+      expect(a.unchanged, isFalse);
+      // Positive means more gain than advised — here, less cut.
+      expect(a.gainDeltaDb, 3);
+    });
+
+    test('a skipped band is recorded as a decision, not as missing data', () {
+      const a = AppliedBand(recommended: advised);
+      expect(a.skipped, isTrue);
+      expect(a.gainDeltaDb, isNull);
+    });
+
+    test('rounding in the DSP is not treated as a deviation', () {
+      // Entering 999.8 Hz for a 1000 Hz suggestion is the same decision.
+      const a = AppliedBand(
+        recommended: advised,
+        entered: PeqBand(freqHz: 999.8, gainDb: -6.02, q: 2.01),
+      );
+      expect(a.unchanged, isTrue,
+          reason: 'tiny differences would drown the real deviations in noise');
+    });
+
+    test('an entry survives being written and read back', () async {
+      final dir = Directory.systemTemp.createTempSync('rew_applied');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final store = FileJournalStore(dir);
+
+      await store.append(JournalEntry(
+        at: DateTime(2026, 9, 4),
+        event: JournalEvent.applied,
+        tuneId: 't1',
+        tuneName: 'Nexon',
+        parameters: TuningParameters.defaults,
+        applied: const [
+          AppliedBand(recommended: advised, entered: advised),
+          AppliedBand(
+            recommended: PeqBand(freqHz: 60, gainDb: -6, q: 1),
+            entered: PeqBand(freqHz: 60, gainDb: -3, q: 1),
+          ),
+          AppliedBand(recommended: PeqBand(freqHz: 8000, gainDb: -2, q: 8)),
+        ],
+      ));
+
+      final back = (await store.entries()).single;
+      expect(back.event, JournalEvent.applied);
+      expect(back.applied.length, 3);
+      expect(back.changedCount, 1);
+      expect(back.skippedCount, 1);
+      expect(back.applied[1].gainDeltaDb, 3);
+    });
   });
 
   test('a proposal does nothing until it is applied', () async {

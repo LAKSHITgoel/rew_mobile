@@ -153,6 +153,33 @@ class WizardController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Write down what actually went into the DSP. The gap between this and the
+  /// recommendation is the signal worth learning from.
+  Future<void> recordApplied(List<AppliedBand> applied) async {
+    final changed = applied.where((a) => !a.skipped && !a.unchanged).length;
+    final skipped = applied.where((a) => a.skipped).length;
+    try {
+      await journal.append(JournalEntry(
+        at: DateTime.now(),
+        event: JournalEvent.applied,
+        tuneId: project.id,
+        tuneName: project.name,
+        parameters: params,
+        targetCurve: project.targetPresetName,
+        bands: [for (final a in applied) a.recommended],
+        applied: applied,
+        note: 'Entered into the DSP: $changed changed, $skipped skipped of '
+            '${applied.length}.',
+      ));
+    } catch (_) {
+      // Never lose the tuning session because the diary could not be written.
+    }
+    status = changed == 0 && skipped == 0
+        ? 'Recorded — entered as recommended.'
+        : 'Recorded: $changed changed, $skipped skipped.';
+    notifyListeners();
+  }
+
   Future<void> _record(JournalEvent event, Measurement m, EqResult eq,
       {String? note}) async {
     final usable = m.usableBand(minSnrDb: params.minSnrDb);

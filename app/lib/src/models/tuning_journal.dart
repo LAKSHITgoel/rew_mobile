@@ -16,9 +16,56 @@ enum JournalEvent {
   /// EQ was fitted and recommended.
   recommended,
 
+  /// What the owner actually typed into the DSP. The gap between this and the
+  /// recommendation is the most informative signal the journal has: a band
+  /// changed the same way every time is the heuristics being wrong in a
+  /// consistent, fixable direction, which is exactly what should be learned
+  /// from. Without it the journal only records what the app said, never
+  /// whether anyone believed it.
+  applied,
+
   /// The system was re-measured after the settings were entered. This is the
   /// only entry that says whether any of it worked.
   verified,
+}
+
+/// One recommended band, and what became of it.
+class AppliedBand {
+  const AppliedBand({required this.recommended, this.entered});
+
+  final PeqBand recommended;
+
+  /// What was actually entered, or null if the band was skipped. Skipping is a
+  /// judgement too, and worth recording.
+  final PeqBand? entered;
+
+  bool get skipped => entered == null;
+
+  bool get unchanged {
+    final e = entered;
+    if (e == null) return false;
+    return (e.freqHz - recommended.freqHz).abs() < 0.5 &&
+        (e.gainDb - recommended.gainDb).abs() < 0.05 &&
+        (e.q - recommended.q).abs() < 0.02;
+  }
+
+  /// How far the entered gain departed from the advice, positive meaning the
+  /// owner used more gain than suggested.
+  double? get gainDeltaDb =>
+      entered == null ? null : entered!.gainDb - recommended.gainDb;
+
+  Map<String, dynamic> toJson() => {
+        'recommended': recommended.toJson(),
+        if (entered != null) 'entered': entered!.toJson(),
+      };
+
+  factory AppliedBand.fromJson(Map<String, dynamic> j) => AppliedBand(
+        recommended: PeqBand.fromJson(
+            (j['recommended'] as Map).cast<String, dynamic>()),
+        entered: j['entered'] == null
+            ? null
+            : PeqBand.fromJson((j['entered'] as Map).cast<String, dynamic>()),
+      );
 }
 
 class JournalEntry {
@@ -39,6 +86,7 @@ class JournalEntry {
     this.levelDbfs,
     this.captureUsable,
     this.declined = const [],
+    this.applied = const [],
     this.note,
   });
 
@@ -74,6 +122,16 @@ class JournalEntry {
   /// Features the fitter declined to correct, as reason codes with frequencies.
   final List<({int reason, double freqHz})> declined;
 
+  /// For an [JournalEvent.applied] entry: each recommended band and what was
+  /// actually done with it.
+  final List<AppliedBand> applied;
+
+  /// Bands entered differently from the advice.
+  int get changedCount =>
+      applied.where((a) => !a.skipped && !a.unchanged).length;
+
+  int get skippedCount => applied.where((a) => a.skipped).length;
+
   final String? note;
 
   /// Did the fit improve the response? Null when there is nothing to compare.
@@ -103,6 +161,8 @@ class JournalEntry {
         'declined': [
           for (final d in declined) {'reason': d.reason, 'freqHz': d.freqHz}
         ],
+        if (applied.isNotEmpty)
+          'applied': [for (final a in applied) a.toJson()],
         if (note != null) 'note': note,
       };
 
@@ -135,6 +195,10 @@ class JournalEntry {
               reason: ((d as Map)['reason'] as num?)?.toInt() ?? 0,
               freqHz: (d['freqHz'] as num?)?.toDouble() ?? 0.0,
             )
+        ],
+        applied: [
+          for (final a in (j['applied'] as List?) ?? const [])
+            AppliedBand.fromJson((a as Map).cast<String, dynamic>())
         ],
         note: j['note'] as String?,
       );

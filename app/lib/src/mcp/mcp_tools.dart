@@ -332,15 +332,48 @@ List<McpTool> buildTools(McpContext ctx) => [
                   'captureUsable': e.captureUsable,
                   'declined': e.declined.length,
                   'parameters': e.parameters.toJson(),
+                  if (e.applied.isNotEmpty) ...{
+                    'changedFromAdvice': e.changedCount,
+                    'skipped': e.skippedCount,
+                    // The per-band difference, which is the part worth
+                    // reasoning about: a band softened the same way every
+                    // session is a heuristic that is wrong in one direction.
+                    'deviations': [
+                      for (final a in e.applied)
+                        if (a.skipped)
+                          {
+                            'hz': double.parse(
+                                a.recommended.freqHz.toStringAsFixed(1)),
+                            'advisedGainDb': a.recommended.gainDb,
+                            'outcome': 'skipped',
+                          }
+                        else if (!a.unchanged)
+                          {
+                            'hz': double.parse(
+                                a.recommended.freqHz.toStringAsFixed(1)),
+                            'advisedGainDb': a.recommended.gainDb,
+                            'enteredGainDb': a.entered!.gainDb,
+                            'enteredQ': a.entered!.q,
+                            'gainDeltaDb': double.parse(
+                                a.gainDeltaDb!.toStringAsFixed(2)),
+                            'outcome': 'changed',
+                          },
+                    ],
+                  },
                   if (e.note != null) 'note': e.note,
                 }
             ],
             'howToRead':
-                'A "recommended" entry is what the app proposed. A "verified" '
-                'entry is a fresh measurement taken after the settings were '
-                'entered, so its flatness is what the tune actually achieved. '
-                'Entries made over a narrow usable range deserve less weight: '
-                'the sweep did not clear the noise across the band.',
+                'A "recommended" entry is what the app proposed. An "applied" '
+                'entry is what the owner actually typed into the DSP, with the '
+                'per-band differences — the strongest signal here, because a '
+                'band changed the same way session after session means the '
+                'heuristics are wrong in a consistent direction, while a '
+                'single deviation means nothing. A "verified" entry is a fresh '
+                'measurement taken afterwards, so its flatness is what the '
+                'tune actually achieved. Entries made over a narrow usable '
+                'range deserve less weight: the sweep did not clear the noise '
+                'across the band.',
           };
         },
       ),

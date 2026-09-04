@@ -8,8 +8,10 @@ import '../services/crossover_calc.dart';
 import '../platform/file_picker.dart';
 import '../services/dsp_math.dart';
 import '../services/time_align.dart';
+import '../models/tuning_journal.dart';
 import '../services/measurement_service.dart';
 import '../wizard/wizard_controller.dart';
+import 'applied_eq_screen.dart';
 import 'detailed_chart.dart';
 import 'dsp_entry_sheet.dart';
 import 'measurement_detail_screen.dart';
@@ -304,6 +306,18 @@ class _WizardScreenState extends State<WizardScreen> {
         ],
       ),
     ));
+  }
+
+  /// Ask what actually went into the DSP, and write it down. The app only ever
+  /// knew what it suggested; what was believed is the more useful half.
+  Future<void> _recordApplied(EqResult eq) async {
+    final applied = await Navigator.of(context).push<List<AppliedBand>>(
+      MaterialPageRoute(
+        builder: (_) => AppliedEqScreen(recommended: eq.bands),
+      ),
+    );
+    if (applied == null || !mounted) return;
+    await c.recordApplied(applied);
   }
 
   /// Full-size graph with export, for getting a second opinion on a result
@@ -1257,6 +1271,12 @@ class _WizardScreenState extends State<WizardScreen> {
               ),
           ],
           const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: eq.bands.isEmpty ? null : () => _recordApplied(eq),
+            icon: const Icon(Icons.fact_check_outlined),
+            label: const Text('Record what you entered'),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: () => showModalBottomSheet(
               context: context,
