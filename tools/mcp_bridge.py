@@ -12,10 +12,21 @@ work of its own, so there is nothing here to disagree with either end about.
 Usage:
     mcp_bridge.py --url http://PHONE:8787/mcp --token TOKEN
 
-The token changes every time the server is switched off and on in the app, so
-expect to update it; the bridge reports a clear error rather than hanging when
-it has gone stale.
+The token is stable across app restarts; if it is regenerated in the app, the
+bridge reports that clearly rather than hanging.
+
+Install note: keep this somewhere the desktop client is allowed to read. macOS
+blocks a client's subprocess from opening files under ~/Desktop and ~/Documents
+(TCC), and the failure it produces — "Operation not permitted" — looks nothing
+like a permissions problem from the client's side.
 """
+
+# Annotations are not evaluated at run time, so this file still runs on the
+# older python3 that ships with macOS — which is what a desktop client will
+# launch, since it is the one always present at /usr/bin/python3. Without it,
+# `dict | None` in a signature is a TypeError on Python 3.9 and the bridge dies
+# before reading a single line.
+from __future__ import annotations
 
 import argparse
 import json
