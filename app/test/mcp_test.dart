@@ -76,6 +76,13 @@ class _FakeContext implements McpContext {
   Future<void> proposeParameters(ParameterProposal proposal) =>
       journalStore.addProposal(proposal);
 
+  /// Set by a test that wants the decay tool to have something to return.
+  ({ImpulseView impulse, WaterfallView waterfall, DecayReport decay})? timeData;
+
+  @override
+  Future<({ImpulseView impulse, WaterfallView waterfall, DecayReport decay})?>
+      timeDomain() async => timeData;
+
   @override
   FreqResponse? rtaSpectrum() => null;
 
@@ -114,7 +121,7 @@ void main() {
     final tools = (r!['result']['tools'] as List).cast<Map<String, dynamic>>();
     expect(tools.map((t) => t['name']),
         containsAll(['list_tunes', 'get_measurement', 'get_recommendations',
-          'measure', 'get_rta']));
+          'measure', 'get_rta', 'get_decay']));
     for (final t in tools) {
       expect(t['description'], isNotEmpty);
       expect(t['inputSchema']['type'], 'object');
@@ -128,6 +135,64 @@ void main() {
     final text = r!['result']['content'][0]['text'] as String;
     return jsonDecode(text) as Map<String, dynamic>;
   }
+
+  test('get_decay says so plainly when nothing has been measured', () async {
+    final out = await callTool('get_decay');
+    expect(out['available'], isFalse);
+    // The reason has to be actionable: an assistant told only "null" will
+    // guess, and what it guesses will be wrong.
+    expect(out['why'], contains('memory'));
+  });
+
+  test('get_decay reports each band with what its number rests on', () async {
+    ctx.timeData = (
+      impulse: const ImpulseView(
+        samples: [0, 1, 0.5],
+        timeMs: [-1, 0, 1],
+        step: [0, 1, 1.5],
+        energyDb: [-20, 0, -6],
+        peakIndex: 1,
+        inverted: true,
+      ),
+      waterfall: const WaterfallView.empty(),
+      decay: const DecayReport(
+        averageRt60Sec: 0.42,
+        bands: [
+          BandDecay(
+            centerHz: 63,
+            rt60Sec: 0.52,
+            edtSec: 0.20,
+            basis: DecayBasis.t20,
+            straightness: 0.96,
+            usableRangeDb: 31,
+          ),
+          BandDecay(
+            centerHz: 8000,
+            rt60Sec: 0,
+            edtSec: 0,
+            basis: DecayBasis.none,
+            straightness: 0,
+            usableRangeDb: 4,
+          ),
+        ],
+      ),
+    );
+
+    final out = await callTool('get_decay');
+    expect(out['available'], isTrue);
+    expect(out['inverted'], isTrue);
+
+    final bands = (out['bands'] as List).cast<Map<String, dynamic>>();
+    expect(bands.length, 2);
+    expect(bands[0]['centerHz'], 63);
+    expect(bands[0]['rt60Sec'], 0.52);
+    expect(bands[0]['basis'], 'T20');
+    expect(bands[0]['trustworthy'], isTrue);
+    // The one that could not be measured must not look like a 0.00 s decay.
+    expect(bands[1]['basis'], 'not measurable');
+    expect(bands[1]['trustworthy'], isFalse);
+    expect(bands[1]['basisMeans'], isNotEmpty);
+  });
 
   test('list_tunes reports the saved tunes', () async {
     final out = await callTool('list_tunes');

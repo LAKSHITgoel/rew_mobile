@@ -24,6 +24,12 @@ abstract class McpContext {
   /// car, so it is the one tool here with a physical effect.
   Future<Measurement> measure({String? tuneId, int positions});
 
+  /// The time-domain analysis of the most recent measurement, or null if
+  /// nothing has been measured since the app started. It is computed on demand
+  /// from the raw capture, which is held in memory only.
+  Future<({ImpulseView impulse, WaterfallView waterfall, DecayReport decay})?>
+      timeDomain();
+
   /// The live analyser's current spectrum, if it is running.
   FreqResponse? rtaSpectrum();
   double? rtaLevelDbfs();
@@ -279,6 +285,61 @@ List<McpTool> buildTools(McpContext ctx) => [
                 'measurement of the car. Above that you are looking at noise, '
                 'and on a Bluetooth link the SBC codec commonly gives out '
                 'somewhere around 11 kHz.',
+          };
+        },
+      ),
+      McpTool(
+        name: 'get_decay',
+        description:
+            'How the most recent measurement decays in time: which bands ring '
+            'on, whether the system is polarity-inverted, and what is still '
+            'sounding after the rest has stopped. Answers what a frequency '
+            'response cannot — whether a bass problem is a level problem or a '
+            'timing one. Requires a measurement to have been taken since the '
+            'app started.',
+        inputSchema: const {'type': 'object', 'properties': {}},
+        handler: (args) async {
+          final t = await ctx.timeDomain();
+          if (t == null) {
+            return {
+              'available': false,
+              'why': 'No measurement has been taken since the app started. The '
+                  'time-domain views need the raw recording, which is held in '
+                  'memory only and is not part of a saved tune.',
+            };
+          }
+          final ring = t.waterfall.ringing(afterMs: 60);
+          return {
+            'available': true,
+            'inverted': t.impulse.inverted,
+            'bands': [
+              for (final b in t.decay.bands)
+                {
+                  'centerHz': double.parse(b.centerHz.toStringAsFixed(1)),
+                  'rt60Sec': double.parse(b.rt60Sec.toStringAsFixed(3)),
+                  'edtSec': double.parse(b.edtSec.toStringAsFixed(3)),
+                  'basis': b.basis.label,
+                  'basisMeans': b.basis.explanation,
+                  'straightness': double.parse(b.straightness.toStringAsFixed(3)),
+                  'usableRangeDb':
+                      double.parse(b.usableRangeDb.toStringAsFixed(1)),
+                  'trustworthy': b.trustworthy,
+                },
+            ],
+            'stillRingingAt60ms': ring == null
+                ? null
+                : {
+                    'freqHz': double.parse(ring.freqHz.toStringAsFixed(1)),
+                    'levelDb': double.parse(ring.levelDb.toStringAsFixed(1)),
+                  },
+            'note':
+                'No car gives 60 dB of clean decay, so every number here is '
+                'fitted over the span named in "basis" and extrapolated. Treat '
+                'a band with trustworthy=false as a hint. A band whose early '
+                'decay (edtSec) is much shorter than its late decay (rt60Sec) '
+                'is ringing on after the sound has stopped, which EQ can make '
+                'quieter but cannot shorten — that needs damping or a '
+                'different driver position.',
           };
         },
       ),

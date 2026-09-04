@@ -285,6 +285,103 @@ REW_EXPORT size_t rew_distortion(const rew_distortion_request* req);
 // sizeof(rew_distortion_request), so a binding can assert its layout agrees.
 REW_EXPORT size_t rew_distortion_request_size(void);
 
+// Is the volume right to measure at?
+//
+// `recorded` is the captured sweep; `signalFreq`/`signalMag` and
+// `noiseFreq`/`noiseMag` are the analysed sweep and the analysed silence, on a
+// shared grid of `n` points. `out` receives five doubles:
+//   {verdict, peakDbfs, rmsDbfs, medianSnrDb, usableToHz, suggestedChangeDb}
+// — six, and verdict is 0 no signal, 1 clipping, 2 too loud, 3 too quiet,
+// 4 marginal, 5 good.
+REW_EXPORT int rew_assess_level(const double* recorded, size_t recordedLen,
+                                const double* signalFreq, const double* signalMag,
+                                const double* noiseFreq, const double* noiseMag,
+                                size_t n, double fs, double minSnrDb,
+                                double* out);
+
+// ---------------------------------------------------------------------------
+// The measurement in the time domain: impulse, step, energy-time, waterfall
+// and decay time.
+//
+// Each of these takes the raw sweep rather than an already-computed impulse
+// response. That means a deconvolution per call, which costs a few hundred
+// milliseconds — deliberately paid, because the alternative is an opaque
+// handle whose lifetime the Dart side would have to manage, and every one of
+// these is a view a person opened, not something on a hot path.
+// ---------------------------------------------------------------------------
+typedef struct rew_impulse_request {
+  const double* emitted;
+  const double* recorded;
+  size_t emittedLen;
+  size_t recordedLen;
+  double fs;
+  double preMs;   // 0 keeps the default
+  double postMs;  // 0 keeps the default
+
+  double* samplesOut;  // normalised, peak 1.0
+  double* timeMsOut;   // milliseconds relative to the arrival
+  double* stepOut;     // optional: step response
+  double* etcOut;      // optional: energy-time curve, dB below the peak
+  // Optional, 2 doubles: {peakIndex, inverted}. `inverted` is 1 when the
+  // arrival is negative-going — the system as measured is out of polarity.
+  double* infoOut;
+  size_t cap;
+} rew_impulse_request;
+
+REW_EXPORT size_t rew_impulse_response(const rew_impulse_request* req);
+REW_EXPORT size_t rew_impulse_request_size(void);
+
+typedef struct rew_waterfall_request {
+  const double* emitted;
+  const double* recorded;
+  size_t emittedLen;
+  size_t recordedLen;
+  double fs;
+  double sliceSpacingMs;  // 0 keeps the default
+  double windowMs;        // 0 keeps the default
+  double fMin;
+  double fMax;
+  size_t slices;  // 0 keeps the default
+  size_t points;  // frequency points per slice
+
+  double* freqOut;    // `points` values, shared by every slice
+  double* timeMsOut;  // one per slice actually computed
+  // slices * points values, row-major: slice s occupies
+  // magDbOut[s * points .. s * points + points). Relative to the loudest point
+  // of the first slice, so it reads as how far things have fallen.
+  double* magDbOut;
+  size_t sliceCap;
+} rew_waterfall_request;
+
+// Returns the number of slices written (each `points` long), or 0.
+REW_EXPORT size_t rew_waterfall(const rew_waterfall_request* req);
+REW_EXPORT size_t rew_waterfall_request_size(void);
+
+typedef struct rew_decay_request {
+  const double* emitted;
+  const double* recorded;
+  size_t emittedLen;
+  size_t recordedLen;
+  double fs;
+  double fMin;
+  double fMax;
+  double bandsPerOctave;  // 0 keeps the default (octave bands)
+
+  double* centerHzOut;
+  double* rt60Out;         // seconds, extrapolated to a full 60 dB
+  double* edtOut;          // seconds, early decay time
+  double* straightnessOut; // 0..1; below ~0.9 the number is a hint, not a fact
+  double* usableRangeOut;  // dB of clean decay the measurement actually had
+  // 0 none, 1 T10, 2 T20, 3 T30 — which span the number was fitted over. A T10
+  // from a noisy car and a real RT60 are different claims.
+  double* basisOut;
+  double* averageOut;      // optional, 1 double: mean of the usable bands
+  size_t cap;
+} rew_decay_request;
+
+REW_EXPORT size_t rew_decay(const rew_decay_request* req);
+REW_EXPORT size_t rew_decay_request_size(void);
+
 // ---------------------------------------------------------------------------
 // Real-time analyser.
 //

@@ -69,9 +69,9 @@ flutter run --dart-define=USE_MOCK_AUDIO=true   # no mic/car needed
 
 ## Status boundary (important)
 
-- **Verified here:** `core/` + `tools/` (compiled, 43 ctest checks); `app/` Dart
-  (`flutter analyze` clean, 16 tests pass) and `packages/rewcore_ffi/` (its
-  `src/CMakeLists.txt` builds `librewcore_ffi` exporting all 5 `rew_*` symbols).
+- **Verified here:** `core/` + `tools/` (compiled, 863 ctest checks); `app/` Dart
+  (`flutter analyze` clean, 145 tests pass) and `packages/rewcore_ffi/` (its
+  `src/CMakeLists.txt` builds `librewcore_ffi` exporting every `rew_*` symbol).
 - **The Dart↔C ABI is verified end-to-end** by `app/test/ffi_smoke_test.dart`, which
   loads the real compiled library and checks every `rew_*` entry point (including
   calibration-array marshaling and out-params). Build it first, or the test skips:
@@ -103,6 +103,24 @@ flutter run --dart-define=USE_MOCK_AUDIO=true   # no mic/car needed
   and each exports a `*_size()` the Dart side asserts against. A struct ABI
   turns a transposed argument into a compile error but a mismatched layout into
   silent corruption, so the size check is not optional.
+- **Every analysis comes out of the sweep already taken.** Harmonic
+  distortion, the impulse and step responses, the energy-time curve, the
+  waterfall and per-band decay are all derived from the same capture — nothing
+  plays a second stimulus. Distortion works because an exponential sweep
+  separates its harmonics in TIME, at `dt_N = duration * ln(N) / ln(f2/f1)`,
+  so the gates depend on the sweep's real endpoints: those come from
+  `MeasurementService.sweepLimits` and must never be recomputed elsewhere.
+- **The time-domain views need the raw capture**, which lives in memory on the
+  service (`lastRawCapture`) and is never written to disk — a saved tune keeps
+  curves, not recordings. Opening them on an old tune means measuring again.
+- **Decay time says what it was fitted over.** No car gives 60 dB of clean
+  decay, so `DecayBasis` records T10/T20/T30 (or "not measurable") alongside a
+  straightness score, and a band that could not be measured must never render
+  as a 0.00 s decay.
+- **Level is checked before measuring, not after.** `assessLevel()` plays a
+  short sweep plus silence and returns a direction and a rough size to change
+  the volume by. It deliberately does not leave a measurement behind: checking
+  the volume must not discard the capture you had.
 - The mock audio backend is **opt-in only** (`--dart-define=USE_MOCK_AUDIO=true`)
   and paints a banner while active. It must never become a default again: a debug
   build once used it silently and fabricated whole measurements.

@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'dart:math' as math;
 
 // Plain data models shared across the app. Kept JSON-serializable so projects
@@ -843,4 +844,307 @@ class DistortionAnalysis {
     }
     return thdPercent.magDb[best];
   }
+}
+
+/// The measurement in the time domain: what arrived, when.
+///
+/// A frequency response cannot distinguish a level problem from a timing one,
+/// and in a car most of what makes bass sound slow is timing. This is where a
+/// resonance that keeps ringing after the note has stopped becomes visible —
+/// and that is a thing EQ can reduce the level of but never actually fix.
+class ImpulseView {
+  const ImpulseView({
+    required this.samples,
+    required this.timeMs,
+    required this.step,
+    required this.energyDb,
+    required this.peakIndex,
+    required this.inverted,
+  });
+
+  const ImpulseView.empty()
+      : samples = const [],
+        timeMs = const [],
+        step = const [],
+        energyDb = const [],
+        peakIndex = 0,
+        inverted = false;
+
+  /// Normalised so the arrival is 1.0, which makes two measurements comparable
+  /// without knowing what level either was taken at.
+  final List<double> samples;
+
+  /// Milliseconds relative to the arrival — negative before it, zero at it.
+  final List<double> timeMs;
+
+  /// Running sum of the impulse response. A correctly polarised system steps
+  /// up first; an inverted one steps down.
+  final List<double> step;
+
+  /// Energy-time curve, dB below the peak.
+  final List<double> energyDb;
+
+  final int peakIndex;
+
+  /// The arrival is negative-going: the system as measured is inverted.
+  final bool inverted;
+
+  bool get isEmpty => samples.isEmpty;
+}
+
+/// Successive spectra taken at increasing delays after the arrival — the
+/// "waterfall". Where one frequency is still present after everything around
+/// it has fallen away, that is a resonance.
+class WaterfallView {
+  const WaterfallView({
+    required this.freqHz,
+    required this.timeMs,
+    required this.slices,
+  });
+
+  const WaterfallView.empty()
+      : freqHz = const [],
+        timeMs = const [],
+        slices = const [];
+
+  final List<double> freqHz;
+
+  /// How long after the arrival each slice starts.
+  final List<double> timeMs;
+
+  /// `slices[t][f]`, in dB relative to the loudest point of the first slice.
+  final List<List<double>> slices;
+
+  bool get isEmpty => slices.isEmpty;
+
+  /// The frequency that is still loudest once [afterMs] has passed, and how far
+  /// down it is. This is the number worth quoting: "at 60 ms, 78 Hz is still
+  /// only 9 dB down" says more than a picture does.
+  ({double freqHz, double levelDb, double timeMs})? ringing({double afterMs = 50}) {
+    if (isEmpty) return null;
+    var slice = slices.length - 1;
+    for (var i = 0; i < timeMs.length; i++) {
+      if (timeMs[i] >= afterMs) {
+        slice = i;
+        break;
+      }
+    }
+    var best = 0;
+    for (var i = 1; i < slices[slice].length; i++) {
+      if (slices[slice][i] > slices[slice][best]) best = i;
+    }
+    return (
+      freqHz: freqHz[best],
+      levelDb: slices[slice][best],
+      timeMs: timeMs[slice],
+    );
+  }
+}
+
+/// Which span of the decay a band's number was actually fitted over.
+///
+/// This is not pedantry. A true RT60 needs 60 dB of clean decay, which a car
+/// never gives you — the road and HVAC noise arrive long before that. What is
+/// measured is the slope over the first 20 or 30 dB, extrapolated. Saying which
+/// keeps the number honest.
+enum DecayBasis {
+  none('not measurable', 'The decay never rose far enough above the noise to '
+      'measure a slope at all.'),
+  t10('T10', 'Fitted over only 10 dB of decay — indicative, not a measurement.'),
+  t20('T20', 'Fitted over 20 dB of decay and extrapolated to 60.'),
+  t30('T30', 'Fitted over 30 dB of decay and extrapolated to 60.');
+
+  const DecayBasis(this.label, this.explanation);
+  final String label;
+  final String explanation;
+
+  static DecayBasis fromCode(int code) => switch (code) {
+        1 => DecayBasis.t10,
+        2 => DecayBasis.t20,
+        3 => DecayBasis.t30,
+        _ => DecayBasis.none,
+      };
+}
+
+class BandDecay {
+  const BandDecay({
+    required this.centerHz,
+    required this.rt60Sec,
+    required this.edtSec,
+    required this.basis,
+    required this.straightness,
+    required this.usableRangeDb,
+  });
+
+  final double centerHz;
+  final double rt60Sec;
+
+  /// Early decay time — the slope over the first 10 dB. In a small space this
+  /// is closer to what is heard than the late decay is, and a large gap between
+  /// the two is itself the finding: something is ringing on.
+  final double edtSec;
+
+  final DecayBasis basis;
+
+  /// How straight the decay was over the fitted span, 0..1. Below about 0.9 a
+  /// line has been drawn through something that is not a straight decay.
+  final double straightness;
+
+  final double usableRangeDb;
+
+  bool get trustworthy =>
+      basis == DecayBasis.t20 || basis == DecayBasis.t30
+          ? straightness >= 0.9
+          : false;
+}
+
+class DecayReport {
+  const DecayReport({required this.bands, required this.averageRt60Sec});
+  const DecayReport.empty()
+      : bands = const [],
+        averageRt60Sec = 0;
+
+  final List<BandDecay> bands;
+  final double averageRt60Sec;
+
+  bool get isEmpty => bands.isEmpty;
+
+  /// The band that rings longest among those actually measured well enough to
+  /// say so. In a car this is nearly always in the bass, and it is the one
+  /// worth acting on.
+  BandDecay? get worst {
+    BandDecay? out;
+    for (final b in bands) {
+      if (!b.trustworthy) continue;
+      if (out == null || b.rt60Sec > out.rt60Sec) out = b;
+    }
+    return out;
+  }
+}
+
+
+/// What was played and what came back, for the analyses that start from the
+/// deconvolution rather than from a frequency response.
+///
+/// Held in memory for the most recent measurement only. It is large — a 5.5 s
+/// sweep at 48 kHz is a couple of megabytes per channel — and it is not part of
+/// a saved tune, so opening a time-domain view on an old measurement means
+/// measuring again.
+class RawCapture {
+  const RawCapture({
+    required this.emitted,
+    required this.recorded,
+    required this.fs,
+    required this.band,
+  });
+
+  final Float64List emitted;
+  final Float64List recorded;
+  final double fs;
+  final SweepBand band;
+}
+
+/// Whether the volume is right to measure at.
+///
+/// The step that was missing, and the one that decides whether everything
+/// downstream is worth anything. Too quiet and the sweep never clears the car's
+/// own noise, so the top of the response is a picture of road and HVAC noise —
+/// which the EQ fitter will then cheerfully correct. Too loud and the input
+/// clips or the drivers distort. Both produce a curve that looks entirely
+/// plausible, which is exactly the problem.
+enum LevelVerdict {
+  noSignal,
+  clipping,
+  tooLoud,
+  tooQuiet,
+  marginal,
+  good;
+
+  static LevelVerdict fromCode(int code) => switch (code) {
+        1 => LevelVerdict.clipping,
+        2 => LevelVerdict.tooLoud,
+        3 => LevelVerdict.tooQuiet,
+        4 => LevelVerdict.marginal,
+        5 => LevelVerdict.good,
+        _ => LevelVerdict.noSignal,
+      };
+
+  String get headline => switch (this) {
+        LevelVerdict.noSignal => 'Nothing came back',
+        LevelVerdict.clipping => 'The input is clipping',
+        LevelVerdict.tooLoud => 'No headroom left',
+        LevelVerdict.tooQuiet => 'Too quiet to measure',
+        LevelVerdict.marginal => 'Usable, but only just',
+        LevelVerdict.good => 'Level is good',
+      };
+
+  /// What to do about it, in the terms of the thing actually being turned.
+  String get advice => switch (this) {
+        LevelVerdict.noSignal =>
+          'The microphone heard essentially nothing. Check that the phone is '
+              'still the selected source in the car, that the right channel is '
+              'unmuted in the DSP app, and that the mic is plugged in.',
+        LevelVerdict.clipping =>
+          'The capture hit full scale, which means the recording was overloaded '
+              'and the response above it is invented. Turn the car down and '
+              'check again — a clipped measurement cannot be salvaged in '
+              'software.',
+        LevelVerdict.tooLoud =>
+          'Nothing clipped, but there is no room left for a louder passage or a '
+              'resonant peak. Come down a few steps so the next capture has '
+              'somewhere to go.',
+        LevelVerdict.tooQuiet =>
+          'The sweep is barely above the car\'s own noise, so most of what would '
+              'be measured is road, HVAC and hiss rather than speakers. Turn the '
+              'car up and check again.',
+        LevelVerdict.marginal =>
+          'Enough to measure the bass and midrange, but the top of the band runs '
+              'into the noise. Turning up helps if there is room; if the reach '
+              'does not improve, the limit is the wireless codec rather than '
+              'the volume, and nothing on the car\'s volume knob will move it.',
+        LevelVerdict.good =>
+          'Plenty of signal above the noise and headroom to spare. Leave the '
+              'volume exactly where it is — changing it between measurements '
+              'makes them incomparable, and on some head units it changes the '
+              'processing too.',
+      };
+}
+
+class LevelCheck {
+  const LevelCheck({
+    required this.verdict,
+    required this.peakDbfs,
+    required this.rmsDbfs,
+    required this.medianSnrDb,
+    required this.usableToHz,
+    required this.suggestedChangeDb,
+  });
+
+  const LevelCheck.noSignal()
+      : verdict = LevelVerdict.noSignal,
+        peakDbfs = -240,
+        rmsDbfs = -240,
+        medianSnrDb = 0,
+        usableToHz = 0,
+        suggestedChangeDb = 12;
+
+  final LevelVerdict verdict;
+  final double peakDbfs;
+  final double rmsDbfs;
+
+  /// Median signal-to-noise across the band.
+  final double medianSnrDb;
+
+  /// Highest frequency the sweep still clears the noise at. In a car this is
+  /// the number that matters: a Bluetooth link running SBC and a sweep played
+  /// too quietly both look like a response that simply stops partway up.
+  final double usableToHz;
+
+  /// How much louder or quieter to play it. A direction and a rough size — the
+  /// car's volume control is not calibrated in dB, so it cannot be more than
+  /// that.
+  final double suggestedChangeDb;
+
+  bool get readyToMeasure =>
+      verdict == LevelVerdict.good || verdict == LevelVerdict.marginal;
 }

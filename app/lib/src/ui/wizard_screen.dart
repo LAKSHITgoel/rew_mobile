@@ -387,6 +387,8 @@ class _WizardScreenState extends State<WizardScreen> {
         store: c.store,
         core: c.service.core,
         distortion: c.lastMeasurementFull?.distortion,
+        rawCapture: c.service.lastRawCapture,
+        libraryPath: c.service.libraryPath,
         title: '${c.project.name} — ${c.band.label}',
         subtitle: '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
             'smoothing · ${measured.length} points · $cal · level $lvl$reach · '
@@ -736,6 +738,114 @@ class _WizardScreenState extends State<WizardScreen> {
     );
   }
 
+  /// The level check: play a short sweep, then say whether the volume is right.
+  ///
+  /// This replaces the old advice card, which told the user to "set a moderate,
+  /// fixed volume" and left them to guess what moderate meant. Moderate depends
+  /// on the car, the mic gain and the noise on the day, and getting it wrong is
+  /// what produced the measurement that stopped at 10 kHz and the EQ fitted to
+  /// road noise.
+  Widget _levelCheckCard() {
+    final lc = c.levelCheck;
+    final err = c.levelCheckError;
+    final color = switch (lc?.verdict) {
+      null => null,
+      LevelVerdict.good => const Color(0xFF7FC77F),
+      LevelVerdict.marginal => const Color(0xFFC7C77F),
+      LevelVerdict.tooQuiet || LevelVerdict.tooLoud => const Color(0xFFE5A76B),
+      _ => const Color(0xFFE57F7F),
+    };
+    return Card(
+      color: color?.withValues(alpha: 0.14),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Expanded(
+                child: Text('Level check',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: c.checkingLevel ? null : c.runLevelCheck,
+                icon: c.checkingLevel
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.speed, size: 18),
+                label: Text(c.checkingLevel
+                    ? 'Checking…'
+                    : lc == null
+                        ? 'Check level'
+                        : 'Check again'),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            const Text(
+              'Plays a short sweep and listens, to find out whether the volume '
+              'is right before you measure anything. Set the car where you '
+              'normally listen, then check.',
+              style: TextStyle(fontSize: 12),
+            ),
+            if (c.checkingLevel)
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Text('A sweep is playing, then a moment of silence to '
+                    'hear the car itself.',
+                    style: TextStyle(fontSize: 12)),
+              ),
+            if (err != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(err,
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.error)),
+              ),
+            if (lc != null && !c.checkingLevel) ...[
+              const SizedBox(height: 12),
+              Row(children: [
+                Container(
+                    width: 10,
+                    height: 10,
+                    decoration:
+                        BoxDecoration(color: color, shape: BoxShape.circle)),
+                const SizedBox(width: 8),
+                Text(lc.verdict.headline,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ]),
+              const SizedBox(height: 6),
+              Text(lc.verdict.advice, style: const TextStyle(fontSize: 12)),
+              if (lc.suggestedChangeDb.abs() >= 1) ...[
+                const SizedBox(height: 8),
+                Text(
+                  lc.suggestedChangeDb > 0
+                      ? 'Turn the car up by roughly '
+                          '${lc.suggestedChangeDb.round()} dB — a few steps on '
+                          'the volume control — and check again.'
+                      : 'Turn the car down by roughly '
+                          '${lc.suggestedChangeDb.abs().round()} dB and check '
+                          'again.',
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Text(
+                'peak ${lc.peakDbfs.toStringAsFixed(1)} dBFS   ·   '
+                '${lc.medianSnrDb.toStringAsFixed(0)} dB over the noise'
+                '${lc.usableToHz > 0 ? '   ·   clean to ${lc.usableToHz >= 1000 ? '${(lc.usableToHz / 1000).toStringAsFixed(1)} kHz' : '${lc.usableToHz.round()} Hz'}' : ''}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _setupStep() {
     final mic = c.mic;
     return ListView(
@@ -755,6 +865,8 @@ class _WizardScreenState extends State<WizardScreen> {
         ),
         const SizedBox(height: 12),
         _micCheckCard(),
+        const SizedBox(height: 12),
+        _levelCheckCard(),
         const SizedBox(height: 12),
         Card(
           child: ListTile(
@@ -788,9 +900,11 @@ class _WizardScreenState extends State<WizardScreen> {
         ),
         const _InfoCard(
           icon: Icons.warning_amber,
-          title: 'Level',
-          body: 'Set a moderate, fixed volume. If OEM loudness/dynamic processing is '
-              'active the response can change with level — keep it constant.',
+          title: 'Keep the volume fixed',
+          body: 'Once the level check passes, leave the volume alone for the '
+              'rest of the session. If OEM loudness or dynamic processing is '
+              'active the response changes with level, so two measurements at '
+              'different volumes are not comparable.',
         ),
       ],
     );

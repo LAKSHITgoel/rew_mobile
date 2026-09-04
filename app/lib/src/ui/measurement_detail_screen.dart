@@ -18,6 +18,7 @@ import '../platform/file_picker.dart';
 import '../services/project_store.dart';
 import 'detailed_chart.dart';
 import 'distortion_screen.dart';
+import 'time_domain_screen.dart';
 import 'fullscreen_chart.dart';
 
 class MeasurementDetailScreen extends StatefulWidget {
@@ -29,6 +30,8 @@ class MeasurementDetailScreen extends StatefulWidget {
     this.store,
     this.core,
     this.distortion,
+    this.rawCapture,
+    this.libraryPath,
   });
 
   final String title;
@@ -48,6 +51,12 @@ class MeasurementDetailScreen extends StatefulWidget {
   /// rather than shown inline: it answers a different question from the
   /// response curve and deserves its own axes.
   final DistortionAnalysis? distortion;
+
+  /// The samples this measurement came from, when they are still in memory.
+  /// The time-domain views start from the deconvolution, so without these they
+  /// cannot be offered at all.
+  final RawCapture? rawCapture;
+  final String? libraryPath;
 
   @override
   State<MeasurementDetailScreen> createState() =>
@@ -379,6 +388,23 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
                 icon: const Icon(Icons.graphic_eq, size: 18),
                 label: Text('Distortion — worst '
                     '${widget.distortion!.worstThdPercent.toStringAsFixed(1)}%'),
+              ),
+            ),
+          ],
+          if (widget.rawCapture != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => TimeDomainScreen(
+                    capture: widget.rawCapture!,
+                    libraryPath: widget.libraryPath,
+                    title: widget.title,
+                  ),
+                )),
+                icon: const Icon(Icons.timeline, size: 18),
+                label: const Text('In time — impulse, decay, waterfall'),
               ),
             ),
           ],

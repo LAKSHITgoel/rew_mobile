@@ -1,6 +1,7 @@
 // High-level, memory-safe Dart wrapper around the rewcore FFI bindings. All the
 // calloc/free bookkeeping lives here so the rest of the app deals only in Dart
 // lists and model objects.
+import 'dart:math' as math;
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
@@ -259,6 +260,248 @@ class Rewcore {
     }
   }
 
+  /// Is the volume right to measure at? Needs both the analysed sweep and the
+  /// analysed silence, because the question is not how loud the capture is but
+  /// how far it stands above the car's own noise.
+  LevelCheck assessLevel({
+    required Float64List recorded,
+    required FreqResponse signal,
+    required FreqResponse noiseFloor,
+    double fs = 48000,
+    double minSnrDb = 10,
+  }) {
+    final n = math.min(signal.length, noiseFloor.length);
+    if (n == 0 || recorded.isEmpty) return const LevelCheck.noSignal();
+    final rec = calloc<ffi.Double>(recorded.length);
+    final sf = calloc<ffi.Double>(n);
+    final sm = calloc<ffi.Double>(n);
+    final nf = calloc<ffi.Double>(n);
+    final nm = calloc<ffi.Double>(n);
+    final out = calloc<ffi.Double>(6);
+    try {
+      rec.asTypedList(recorded.length).setAll(0, recorded);
+      sf.asTypedList(n).setAll(0, signal.freqHz.take(n));
+      sm.asTypedList(n).setAll(0, signal.magDb.take(n));
+      nf.asTypedList(n).setAll(0, noiseFloor.freqHz.take(n));
+      nm.asTypedList(n).setAll(0, noiseFloor.magDb.take(n));
+      final ok = _b.rewAssessLevel(
+          rec, recorded.length, sf, sm, nf, nm, n, fs, minSnrDb, out);
+      if (ok == 0) return const LevelCheck.noSignal();
+      return LevelCheck(
+        verdict: LevelVerdict.fromCode(out[0].round()),
+        peakDbfs: out[1],
+        rmsDbfs: out[2],
+        medianSnrDb: out[3],
+        usableToHz: out[4],
+        suggestedChangeDb: out[5],
+      );
+    } finally {
+      calloc.free(rec);
+      calloc.free(sf);
+      calloc.free(sm);
+      calloc.free(nf);
+      calloc.free(nm);
+      calloc.free(out);
+    }
+  }
+
+  /// The impulse response, with the step response and energy-time curve that
+  /// come from it. All three are views of the same arrival, so they are
+  /// computed together rather than making the caller pay for the
+  /// deconvolution three times.
+  ImpulseView impulseResponse({
+    required Float64List emitted,
+    required Float64List recorded,
+    double fs = 48000,
+    double preMs = 5,
+    double postMs = 300,
+  }) {
+    final cap = ((preMs + postMs) * fs / 1000).ceil() + 8;
+    final em = calloc<ffi.Double>(emitted.length);
+    final rec = calloc<ffi.Double>(recorded.length);
+    final samples = calloc<ffi.Double>(cap);
+    final times = calloc<ffi.Double>(cap);
+    final step = calloc<ffi.Double>(cap);
+    final etc = calloc<ffi.Double>(cap);
+    final info = calloc<ffi.Double>(2);
+    try {
+      em.asTypedList(emitted.length).setAll(0, emitted);
+      rec.asTypedList(recorded.length).setAll(0, recorded);
+      final req = calloc<RewImpulseRequest>();
+      try {
+        req.ref
+          ..emitted = em
+          ..recorded = rec
+          ..emittedLen = emitted.length
+          ..recordedLen = recorded.length
+          ..fs = fs
+          ..preMs = preMs
+          ..postMs = postMs
+          ..samplesOut = samples
+          ..timeMsOut = times
+          ..stepOut = step
+          ..etcOut = etc
+          ..infoOut = info
+          ..cap = cap;
+        final n = _b.rewImpulseResponse(req);
+        if (n == 0) return const ImpulseView.empty();
+        return ImpulseView(
+          samples: List<double>.from(samples.asTypedList(n)),
+          timeMs: List<double>.from(times.asTypedList(n)),
+          step: List<double>.from(step.asTypedList(n)),
+          energyDb: List<double>.from(etc.asTypedList(n)),
+          peakIndex: info[0].round(),
+          inverted: info[1] != 0,
+        );
+      } finally {
+        calloc.free(req);
+      }
+    } finally {
+      calloc.free(em);
+      calloc.free(rec);
+      calloc.free(samples);
+      calloc.free(times);
+      calloc.free(step);
+      calloc.free(etc);
+      calloc.free(info);
+    }
+  }
+
+  /// Spectral decay: the same spectrum computed at successive moments after the
+  /// arrival.
+  WaterfallView waterfall({
+    required Float64List emitted,
+    required Float64List recorded,
+    double fs = 48000,
+    int slices = 16,
+    double sliceSpacingMs = 5,
+    double windowMs = 60,
+    double fMin = 20,
+    double fMax = 500,
+    int points = 64,
+  }) {
+    final em = calloc<ffi.Double>(emitted.length);
+    final rec = calloc<ffi.Double>(recorded.length);
+    final freq = calloc<ffi.Double>(points);
+    final times = calloc<ffi.Double>(slices);
+    final mags = calloc<ffi.Double>(points * slices);
+    try {
+      em.asTypedList(emitted.length).setAll(0, emitted);
+      rec.asTypedList(recorded.length).setAll(0, recorded);
+      final req = calloc<RewWaterfallRequest>();
+      try {
+        req.ref
+          ..emitted = em
+          ..recorded = rec
+          ..emittedLen = emitted.length
+          ..recordedLen = recorded.length
+          ..fs = fs
+          ..sliceSpacingMs = sliceSpacingMs
+          ..windowMs = windowMs
+          ..fMin = fMin
+          ..fMax = fMax
+          ..slices = slices
+          ..points = points
+          ..freqOut = freq
+          ..timeMsOut = times
+          ..magDbOut = mags
+          ..sliceCap = slices;
+        final n = _b.rewWaterfall(req);
+        if (n == 0) return const WaterfallView.empty();
+        final flat = mags.asTypedList(points * slices);
+        return WaterfallView(
+          freqHz: List<double>.from(freq.asTypedList(points)),
+          timeMs: List<double>.from(times.asTypedList(n)),
+          slices: [
+            for (var s = 0; s < n; s++)
+              List<double>.from(flat.sublist(s * points, s * points + points)),
+          ],
+        );
+      } finally {
+        calloc.free(req);
+      }
+    } finally {
+      calloc.free(em);
+      calloc.free(rec);
+      calloc.free(freq);
+      calloc.free(times);
+      calloc.free(mags);
+    }
+  }
+
+  /// Decay time per band, with what each number was actually fitted over.
+  DecayReport decay({
+    required Float64List emitted,
+    required Float64List recorded,
+    double fs = 48000,
+    double fMin = 32,
+    double fMax = 8000,
+    double bandsPerOctave = 1,
+  }) {
+    const cap = 64;
+    final em = calloc<ffi.Double>(emitted.length);
+    final rec = calloc<ffi.Double>(recorded.length);
+    final centers = calloc<ffi.Double>(cap);
+    final rt60 = calloc<ffi.Double>(cap);
+    final edt = calloc<ffi.Double>(cap);
+    final straight = calloc<ffi.Double>(cap);
+    final range = calloc<ffi.Double>(cap);
+    final basis = calloc<ffi.Double>(cap);
+    final average = calloc<ffi.Double>(1);
+    try {
+      em.asTypedList(emitted.length).setAll(0, emitted);
+      rec.asTypedList(recorded.length).setAll(0, recorded);
+      final req = calloc<RewDecayRequest>();
+      try {
+        req.ref
+          ..emitted = em
+          ..recorded = rec
+          ..emittedLen = emitted.length
+          ..recordedLen = recorded.length
+          ..fs = fs
+          ..fMin = fMin
+          ..fMax = fMax
+          ..bandsPerOctave = bandsPerOctave
+          ..centerHzOut = centers
+          ..rt60Out = rt60
+          ..edtOut = edt
+          ..straightnessOut = straight
+          ..usableRangeOut = range
+          ..basisOut = basis
+          ..averageOut = average
+          ..cap = cap;
+        final n = _b.rewDecay(req);
+        if (n == 0) return const DecayReport.empty();
+        return DecayReport(
+          averageRt60Sec: average[0],
+          bands: [
+            for (var i = 0; i < n; i++)
+              BandDecay(
+                centerHz: centers[i],
+                rt60Sec: rt60[i],
+                edtSec: edt[i],
+                basis: DecayBasis.fromCode(basis[i].round()),
+                straightness: straight[i],
+                usableRangeDb: range[i],
+              ),
+          ],
+        );
+      } finally {
+        calloc.free(req);
+      }
+    } finally {
+      calloc.free(em);
+      calloc.free(rec);
+      calloc.free(centers);
+      calloc.free(rt60);
+      calloc.free(edt);
+      calloc.free(straight);
+      calloc.free(range);
+      calloc.free(basis);
+      calloc.free(average);
+    }
+  }
+
   /// Recommend crossover edges for one measured driver response.
   CrossoverRecommendation recommendCrossover(FreqResponse driver,
       {double dropDb = 6,
@@ -331,6 +574,9 @@ class Rewcore {
       _b.rewMeasureRequestSize() == ffi.sizeOf<RewMeasureRequest>() &&
       _b.rewCrossoverResultSize() == ffi.sizeOf<RewCrossoverResult>() &&
       _b.rewDistortionRequestSize() == ffi.sizeOf<RewDistortionRequest>() &&
+      _b.rewImpulseRequestSize() == ffi.sizeOf<RewImpulseRequest>() &&
+      _b.rewWaterfallRequestSize() == ffi.sizeOf<RewWaterfallRequest>() &&
+      _b.rewDecayRequestSize() == ffi.sizeOf<RewDecayRequest>() &&
       _b.rewSummationResultSize() == ffi.sizeOf<RewSummationResult>();
 
   /// Asserts the Dart mirror of `rew_rta_config` agrees with the C struct.

@@ -106,6 +106,103 @@ void main() {
     expect(plain.magDb[mid] - calibrated.magDb[mid], closeTo(3.0, 0.3));
   });
 
+  test('rew_assess_level turns a capture and a noise floor into advice', () {
+    const fs = 48000.0;
+    final sine = Float64List(fs.toInt());
+    for (var i = 0; i < sine.length; i++) {
+      sine[i] = 0.25 * math.sin(2 * math.pi * 1000 * i / fs);
+    }
+    FreqResponse flat(double db) => FreqResponse(
+          [for (var i = 0; i < 48; i++) 20 * math.pow(1000, i / 47).toDouble()],
+          List<double>.filled(48, db),
+        );
+
+    final good = core.assessLevel(
+        recorded: sine, signal: flat(-20), noiseFloor: flat(-60), fs: fs);
+    expect(good.verdict, LevelVerdict.good);
+    expect(good.peakDbfs, closeTo(-12.04, 0.5));
+    expect(good.medianSnrDb, closeTo(40, 1));
+    expect(good.readyToMeasure, isTrue);
+
+    // Barely above the noise: the direction of the advice has to survive the
+    // ABI, not just its magnitude.
+    final quiet = core.assessLevel(
+        recorded: sine, signal: flat(-58), noiseFloor: flat(-60), fs: fs);
+    expect(quiet.verdict, LevelVerdict.tooQuiet);
+    expect(quiet.suggestedChangeDb, greaterThan(0));
+    expect(quiet.readyToMeasure, isFalse);
+
+    // Every verdict must carry text a person can act on — an enum on its own
+    // tells the user nothing.
+    for (final v in LevelVerdict.values) {
+      expect(v.headline, isNotEmpty);
+      expect(v.advice.length, greaterThan(40));
+    }
+  });
+
+  test('the time-domain calls cross the ABI and agree about polarity', () {
+    const fs = 48000.0;
+    final sweep = core.generateSweep(fs: fs, f1: 40, f2: 16000, durationSec: 1);
+    const delay = 480; // 10 ms
+    final rec = Float64List(sweep.length + delay);
+    for (var i = 0; i < sweep.length; i++) {
+      rec[i + delay] = sweep[i];
+    }
+
+    final ir = core.impulseResponse(
+        emitted: sweep, recorded: rec, fs: fs, preMs: 5, postMs: 50);
+    expect(ir.isEmpty, isFalse);
+    expect(ir.inverted, isFalse);
+    // Every optional out-param was filled, and they are all the same length —
+    // this is the part a struct ABI gets silently wrong.
+    expect(ir.timeMs.length, ir.samples.length);
+    expect(ir.step.length, ir.samples.length);
+    expect(ir.energyDb.length, ir.samples.length);
+    // The arrival is at t = 0 and is the normalised peak.
+    expect(ir.timeMs[ir.peakIndex].abs(), lessThan(0.05));
+    expect(ir.samples[ir.peakIndex].abs(), closeTo(1.0, 0.02));
+
+    // Flip the recording: the ABI must carry the polarity bit back.
+    final flipped = Float64List.fromList([for (final v in rec) -v]);
+    final inv = core.impulseResponse(
+        emitted: sweep, recorded: flipped, fs: fs, preMs: 5, postMs: 50);
+    expect(inv.inverted, isTrue);
+    expect(ir.step[ir.peakIndex + 2] * inv.step[inv.peakIndex + 2],
+        lessThan(0),
+        reason: 'the step responses must go opposite ways');
+
+    // Waterfall: the row-major unpacking is what can go wrong here, so check
+    // the shape rather than the values.
+    final w = core.waterfall(
+        emitted: sweep,
+        recorded: rec,
+        fs: fs,
+        slices: 6,
+        sliceSpacingMs: 5,
+        windowMs: 30,
+        fMin: 50,
+        fMax: 500,
+        points: 32);
+    expect(w.isEmpty, isFalse);
+    expect(w.freqHz.length, 32);
+    expect(w.timeMs.length, w.slices.length);
+    for (final row in w.slices) {
+      expect(row.length, 32);
+    }
+    // The first slice is the reference, so its loudest point is 0 dB.
+    expect(w.slices.first.reduce((a, b) => a > b ? a : b), closeTo(0, 0.5));
+
+    final d = core.decay(
+        emitted: sweep, recorded: rec, fs: fs, fMin: 125, fMax: 1000);
+    expect(d.bands, isNotEmpty);
+    for (final b in d.bands) {
+      expect(b.centerHz, greaterThan(0));
+      // A pure delay has no decay to measure; what matters is that it says so
+      // rather than returning a number it cannot support.
+      expect(b.basis, isA<DecayBasis>());
+    }
+  });
+
   test('rew_distortion finds a known nonlinearity across the real ABI', () {
     const fs = 48000.0;
     const f1 = 30.0, f2 = 16000.0, dur = 3.0;

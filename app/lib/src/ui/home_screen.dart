@@ -1,6 +1,8 @@
+import 'dart:isolate';
 import 'package:flutter/material.dart';
 
 import '../app_services.dart';
+import '../ffi/rewcore.dart';
 import '../models/project.dart';
 import '../mcp/mcp_server.dart';
 import '../mcp/mcp_tools.dart';
@@ -245,13 +247,37 @@ class _AppMcpContext implements McpContext {
     return null;
   }
 
+  /// One service across calls, so the raw capture from a measurement is still
+  /// there when the assistant follows up by asking about the decay.
+  MeasurementService? _service;
+
   @override
   Future<Measurement> measure({String? tuneId, int positions = 3}) async {
     // Calibrated like every other measurement: a curve handed to an assistant
     // for review must not be the microphone's response rather than the car's.
-    final service = MeasurementService(services.core, services.audio,
+    final service = _service ??= MeasurementService(
+        services.core, services.audio,
         calibration: services.calibration);
     return service.measureAveraged(positions);
+  }
+
+  @override
+  Future<({ImpulseView impulse, WaterfallView waterfall, DecayReport decay})?>
+      timeDomain() async {
+    final raw = _service?.lastRawCapture;
+    if (raw == null) return null;
+    final lib = _service?.libraryPath;
+    return Isolate.run(() {
+      final core = Rewcore.open(libraryPath: lib);
+      return (
+        impulse: core.impulseResponse(
+            emitted: raw.emitted, recorded: raw.recorded, fs: raw.fs),
+        waterfall: core.waterfall(
+            emitted: raw.emitted, recorded: raw.recorded, fs: raw.fs),
+        decay: core.decay(
+            emitted: raw.emitted, recorded: raw.recorded, fs: raw.fs),
+      );
+    });
   }
 
   @override

@@ -199,6 +199,15 @@ class MeasurementService {
   // an averaged set would be wasteful.
   final Map<String, Future<Float64List>> _sweeps = {};
 
+  /// The raw samples of the most recent capture, kept in memory only.
+  ///
+  /// The time-domain views — impulse, step, waterfall, decay — all start from
+  /// the deconvolution, so they need what was played and what came back, not
+  /// the frequency response that was derived from them. This is several
+  /// megabytes of doubles, so exactly one is held and none is ever written to
+  /// disk: a saved tune keeps curves, not recordings.
+  RawCapture? lastRawCapture;
+
   /// The stimulus for [band]. The swept range is deliberately a little wider than
   /// the analysed range, so the sweep's fade-in/out never lands on a band edge.
   /// The endpoints the stimulus for [band] is actually generated with — a
@@ -296,6 +305,68 @@ class MeasurementService {
         ));
   }
 
+  /// Play a sweep, capture it, and say whether the volume is right — without
+  /// producing a measurement or any advice from it.
+  ///
+  /// This is deliberately its own operation. Level is the step before
+  /// measuring, and folding it into a measurement would mean the user found out
+  /// the volume was wrong only after taking a curve they then had to throw
+  /// away. It uses a short sweep because the question does not need a long one.
+  Future<LevelCheck> checkLevel({SweepBand band = SweepBand.full}) async {
+    // A short sweep of its own, so a level check does not sit through 5.5
+    // seconds twice. It is generated here rather than cached: it is used once
+    // per check and keeping another full-length buffer alive is not worth it.
+    final fs = config.fs;
+    final limits = sweepLimits(band);
+    final lib = libraryPath;
+    final stimulus = await Isolate.run(() => Rewcore.open(libraryPath: lib)
+        .generateSweep(
+            fs: fs, f1: limits.f1, f2: limits.f2, durationSec: 1.4));
+
+    final recorded = await _audio
+        .playSweepAndCapture(sweep: stimulus, fs: fs)
+        .timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => throw TimeoutException(
+          'The microphone did not return any audio during the level check. '
+          'Check it is still plugged in, then try again.'),
+    );
+    final silence = await _audio
+        .playSweepAndCapture(sweep: Float64List(stimulus.length), fs: fs)
+        .timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => throw TimeoutException(
+          'The microphone stopped responding while measuring the car\'s own '
+          'noise.'),
+    );
+
+    final pts = config.gridPoints;
+    final smooth = config.smoothFrac;
+    final fLo = band.fLo;
+    final fHi = band.fHi;
+    final cal = calibration;
+
+    return Isolate.run(() {
+      final core = Rewcore.open(libraryPath: lib);
+      FreqResponse analyse(Float64List capture) => core.measureFr(
+            emitted: stimulus,
+            recorded: capture,
+            fs: fs,
+            fMin: fLo,
+            fMax: fHi,
+            smoothFrac: smooth,
+            points: pts,
+            calibration: cal,
+          );
+      return core.assessLevel(
+        recorded: recorded,
+        signal: analyse(recorded),
+        noiseFloor: analyse(silence),
+        fs: fs,
+      );
+    });
+  }
+
   Future<Measurement> measureOnce({
     SweepBand band = SweepBand.full,
     FreqResponse? noiseFloor,
@@ -330,6 +401,9 @@ class MeasurementService {
     final f1 = limits.f1;
     final f2 = limits.f2;
     final dur = config.durationSec;
+
+    lastRawCapture =
+        RawCapture(emitted: stimulus, recorded: recorded, fs: fs, band: band);
 
     return Isolate.run(() {
       final core = Rewcore.open(libraryPath: lib);

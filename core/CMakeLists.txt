@@ -10,6 +10,7 @@ add_library(rewcore
   src/peq.cpp
   src/rta.cpp
   src/distortion.cpp
+  src/decay.cpp
   src/crossover.cpp
   src/calibration.cpp
   src/wav.cpp

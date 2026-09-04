@@ -67,6 +67,7 @@ struct CaptureQuality {
 
 CaptureQuality assessCapture(const std::vector<double>& x, double fs);
 
+
 // Convert a measured dBFS level to dB SPL given a calibration offset.
 //
 // The offset cannot be derived from the mic's sensitivity alone on a phone: the
@@ -133,6 +134,57 @@ FreqResponse smoothFractionalOctave(const FreqResponse& fr, double fractionOfOct
 // Resample a magnitude response onto a log-spaced frequency grid over [fMin, fMax].
 FreqResponse resampleLog(const FreqResponse& fr, double fMin, double fMax,
                          std::size_t points);
+
+// ---- Level check ----------------------------------------------------------
+
+// Is the measurement being made at a sensible volume?
+//
+// This is the step that was missing, and it is the one that decides whether
+// everything downstream is worth anything. Too quiet and the sweep never gets
+// clear of the car's own noise, so the top of the response is a picture of road
+// and HVAC noise and the EQ fitter cheerfully corrects it. Too loud and the
+// input clips, or the drivers start distorting, and the response is of a system
+// being driven past where it works. Both produce a curve that looks entirely
+// plausible.
+//
+// Deliberately separate from assessCapture: that one asks "is this recording
+// broken", which is a yes/no about a measurement already taken. This asks "is
+// the volume right", which is advice given BEFORE measuring, and needs the
+// noise floor to answer at all.
+enum class LevelVerdict {
+  noSignal = 0,   ///< nothing arrived — wrong channel, or nothing playing
+  clipping,       ///< the input is being overloaded
+  tooLoud,        ///< not clipping yet, but no headroom left
+  tooQuiet,       ///< clear of the noise nowhere useful
+  marginal,       ///< usable, but the top of the band is noise-limited
+  good,
+};
+
+struct LevelCheck {
+  LevelVerdict verdict = LevelVerdict::noSignal;
+  double peakDbfs = -240.0;
+  double rmsDbfs = -240.0;
+  /// Median signal-to-noise across the band, in dB.
+  double medianSnrDb = 0.0;
+  /// Highest frequency at which the sweep still clears `minSnrDb`. This is the
+  /// number that matters in a car: a link running SBC, or a sweep played too
+  /// quietly, both show up as a response that simply stops partway up.
+  double usableToHz = 0.0;
+  /// How much louder (positive) or quieter (negative) to play it, in dB. Zero
+  /// when the level is already right. This is a suggestion, not a measurement:
+  /// the car's volume control is not calibrated, so it is a direction and a
+  /// rough size.
+  double suggestedChangeDb = 0.0;
+};
+
+// `recorded` is a captured sweep and `noise` the same capture with nothing
+// played; `signal` and `noiseFloor` are their analysed responses, on a shared
+// frequency grid. minSnrDb is the margin a point must clear to count as
+// measured rather than guessed at.
+LevelCheck assessLevel(const std::vector<double>& recorded,
+                       const FreqResponse& signal,
+                       const FreqResponse& noiseFloor, double fs,
+                       double minSnrDb = 10.0);
 
 // Complex-average / RMS-average several measurements taken around the listening
 // position into one spatial average (all must share the same frequency grid).

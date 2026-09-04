@@ -362,6 +362,123 @@ typedef RewDistortionDart = int Function(ffi.Pointer<RewDistortionRequest>);
 typedef _RewDistortionRequestSizeC = ffi.Size Function();
 typedef RewDistortionRequestSizeDart = int Function();
 
+/// Mirrors `rew_impulse_request` in core/ffi/rewcore_ffi.h. Field order and
+/// types must match exactly; see the note on [RewPeqRequest].
+final class RewImpulseRequest extends ffi.Struct {
+  external ffi.Pointer<ffi.Double> emitted;
+  external ffi.Pointer<ffi.Double> recorded;
+  @ffi.Size()
+  external int emittedLen;
+  @ffi.Size()
+  external int recordedLen;
+  @ffi.Double()
+  external double fs;
+  @ffi.Double()
+  external double preMs;
+  @ffi.Double()
+  external double postMs;
+
+  external ffi.Pointer<ffi.Double> samplesOut;
+  external ffi.Pointer<ffi.Double> timeMsOut;
+  external ffi.Pointer<ffi.Double> stepOut;
+  external ffi.Pointer<ffi.Double> etcOut;
+  external ffi.Pointer<ffi.Double> infoOut;
+  @ffi.Size()
+  external int cap;
+}
+
+/// Mirrors `rew_waterfall_request`.
+final class RewWaterfallRequest extends ffi.Struct {
+  external ffi.Pointer<ffi.Double> emitted;
+  external ffi.Pointer<ffi.Double> recorded;
+  @ffi.Size()
+  external int emittedLen;
+  @ffi.Size()
+  external int recordedLen;
+  @ffi.Double()
+  external double fs;
+  @ffi.Double()
+  external double sliceSpacingMs;
+  @ffi.Double()
+  external double windowMs;
+  @ffi.Double()
+  external double fMin;
+  @ffi.Double()
+  external double fMax;
+  @ffi.Size()
+  external int slices;
+  @ffi.Size()
+  external int points;
+
+  external ffi.Pointer<ffi.Double> freqOut;
+  external ffi.Pointer<ffi.Double> timeMsOut;
+  external ffi.Pointer<ffi.Double> magDbOut;
+  @ffi.Size()
+  external int sliceCap;
+}
+
+/// Mirrors `rew_decay_request`.
+final class RewDecayRequest extends ffi.Struct {
+  external ffi.Pointer<ffi.Double> emitted;
+  external ffi.Pointer<ffi.Double> recorded;
+  @ffi.Size()
+  external int emittedLen;
+  @ffi.Size()
+  external int recordedLen;
+  @ffi.Double()
+  external double fs;
+  @ffi.Double()
+  external double fMin;
+  @ffi.Double()
+  external double fMax;
+  @ffi.Double()
+  external double bandsPerOctave;
+
+  external ffi.Pointer<ffi.Double> centerHzOut;
+  external ffi.Pointer<ffi.Double> rt60Out;
+  external ffi.Pointer<ffi.Double> edtOut;
+  external ffi.Pointer<ffi.Double> straightnessOut;
+  external ffi.Pointer<ffi.Double> usableRangeOut;
+  external ffi.Pointer<ffi.Double> basisOut;
+  external ffi.Pointer<ffi.Double> averageOut;
+  @ffi.Size()
+  external int cap;
+}
+
+// int rew_assess_level(recorded*, n, sigF*, sigM*, noiseF*, noiseM*, n, fs,
+//                      minSnrDb, out*);
+typedef _RewAssessLevelC = ffi.Int Function(
+    ffi.Pointer<ffi.Double>,
+    ffi.Size,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Size,
+    ffi.Double,
+    ffi.Double,
+    ffi.Pointer<ffi.Double>);
+typedef RewAssessLevelDart = int Function(
+    ffi.Pointer<ffi.Double>,
+    int,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>,
+    int,
+    double,
+    double,
+    ffi.Pointer<ffi.Double>);
+
+typedef _RewImpulseC = ffi.Size Function(ffi.Pointer<RewImpulseRequest>);
+typedef RewImpulseDart = int Function(ffi.Pointer<RewImpulseRequest>);
+typedef _RewWaterfallC = ffi.Size Function(ffi.Pointer<RewWaterfallRequest>);
+typedef RewWaterfallDart = int Function(ffi.Pointer<RewWaterfallRequest>);
+typedef _RewDecayC = ffi.Size Function(ffi.Pointer<RewDecayRequest>);
+typedef RewDecayDart = int Function(ffi.Pointer<RewDecayRequest>);
+typedef _RewSizeC = ffi.Size Function();
+typedef RewSizeDart = int Function();
+
 /// Resolved function pointers for the rewcore native library.
 class RewcoreBindings {
   RewcoreBindings(ffi.DynamicLibrary lib)
@@ -406,6 +523,20 @@ class RewcoreBindings {
         rewDistortionRequestSize = lib.lookupFunction<
             _RewDistortionRequestSizeC,
             RewDistortionRequestSizeDart>('rew_distortion_request_size'),
+        rewAssessLevel =
+            lib.lookupFunction<_RewAssessLevelC, RewAssessLevelDart>(
+                'rew_assess_level'),
+        rewImpulseResponse = lib.lookupFunction<_RewImpulseC, RewImpulseDart>(
+            'rew_impulse_response'),
+        rewImpulseRequestSize = lib.lookupFunction<_RewSizeC, RewSizeDart>(
+            'rew_impulse_request_size'),
+        rewWaterfall = lib
+            .lookupFunction<_RewWaterfallC, RewWaterfallDart>('rew_waterfall'),
+        rewWaterfallRequestSize = lib.lookupFunction<_RewSizeC, RewSizeDart>(
+            'rew_waterfall_request_size'),
+        rewDecay = lib.lookupFunction<_RewDecayC, RewDecayDart>('rew_decay'),
+        rewDecayRequestSize = lib.lookupFunction<_RewSizeC, RewSizeDart>(
+            'rew_decay_request_size'),
         rewFitPeq =
             lib.lookupFunction<_RewFitPeqC, RewFitPeqDart>('rew_fit_peq'),
         rewPeqRequestSize =
@@ -432,6 +563,13 @@ class RewcoreBindings {
   final RewMeasureRequestSizeDart rewMeasureRequestSize;
   final RewDistortionDart rewDistortion;
   final RewDistortionRequestSizeDart rewDistortionRequestSize;
+  final RewAssessLevelDart rewAssessLevel;
+  final RewImpulseDart rewImpulseResponse;
+  final RewSizeDart rewImpulseRequestSize;
+  final RewWaterfallDart rewWaterfall;
+  final RewSizeDart rewWaterfallRequestSize;
+  final RewDecayDart rewDecay;
+  final RewSizeDart rewDecayRequestSize;
   final RewFitPeqDart rewFitPeq;
   final RewPeqRequestSizeDart rewPeqRequestSize;
   final RewResponseSpreadDart rewResponseSpread;

@@ -5,6 +5,7 @@
 
 #include "rewcore/calibration.hpp"
 #include "rewcore/crossover.hpp"
+#include "rewcore/decay.hpp"
 #include "rewcore/distortion.hpp"
 #include "rewcore/dsp.hpp"
 #include "rewcore/peq.hpp"
@@ -347,6 +348,153 @@ size_t rew_distortion(const rew_distortion_request* req) {
     req->worstOut[0] = r.worstThdPercent;
     req->worstOut[1] = r.worstThdHz;
   }
+  return n;
+}
+
+int rew_assess_level(const double* recorded, size_t recordedLen,
+                     const double* signalFreq, const double* signalMag,
+                     const double* noiseFreq, const double* noiseMag, size_t n,
+                     double fs, double minSnrDb, double* out) {
+  if (!out) return 0;
+  if (!recorded || !signalFreq || !signalMag || !noiseFreq || !noiseMag) return 0;
+
+  FreqResponse signal, noise;
+  signal.freqHz.assign(signalFreq, signalFreq + n);
+  signal.magDb.assign(signalMag, signalMag + n);
+  noise.freqHz.assign(noiseFreq, noiseFreq + n);
+  noise.magDb.assign(noiseMag, noiseMag + n);
+
+  const std::vector<double> rec(recorded, recorded + recordedLen);
+  const LevelCheck lc =
+      assessLevel(rec, signal, noise, fs, minSnrDb > 0.0 ? minSnrDb : 10.0);
+
+  out[0] = static_cast<double>(lc.verdict);
+  out[1] = lc.peakDbfs;
+  out[2] = lc.rmsDbfs;
+  out[3] = lc.medianSnrDb;
+  out[4] = lc.usableToHz;
+  out[5] = lc.suggestedChangeDb;
+  return 1;
+}
+
+size_t rew_impulse_request_size(void) { return sizeof(rew_impulse_request); }
+
+// Shared by all three time-domain calls: they each start from the same place.
+static ImpulseResponse impulseFrom(const double* emitted, size_t emittedLen,
+                                   const double* recorded, size_t recordedLen,
+                                   double fs, double preMs, double postMs) {
+  ImpulseSpec spec;
+  if (fs > 0.0) spec.fs = fs;
+  if (preMs > 0.0) spec.preMs = preMs;
+  if (postMs > 0.0) spec.postMs = postMs;
+  const std::vector<double> em(emitted, emitted + emittedLen);
+  const std::vector<double> rec(recorded, recorded + recordedLen);
+  return computeImpulseResponse(em, rec, spec);
+}
+
+size_t rew_impulse_response(const rew_impulse_request* req) {
+  if (!req || !req->emitted || !req->recorded) return 0;
+  if (!req->samplesOut || req->cap == 0) return 0;
+
+  const ImpulseResponse ir =
+      impulseFrom(req->emitted, req->emittedLen, req->recorded,
+                  req->recordedLen, req->fs, req->preMs, req->postMs);
+  if (!ir.valid) return 0;
+
+  const size_t n = std::min(req->cap, ir.samples.size());
+  for (size_t i = 0; i < n; ++i) {
+    req->samplesOut[i] = ir.samples[i];
+    if (req->timeMsOut) req->timeMsOut[i] = ir.timeMs[i];
+  }
+  if (req->stepOut) {
+    const std::vector<double> step = stepResponse(ir);
+    for (size_t i = 0; i < n && i < step.size(); ++i) req->stepOut[i] = step[i];
+  }
+  if (req->etcOut) {
+    const std::vector<double> etc = energyTimeCurveDb(ir);
+    for (size_t i = 0; i < n && i < etc.size(); ++i) req->etcOut[i] = etc[i];
+  }
+  if (req->infoOut) {
+    req->infoOut[0] = static_cast<double>(ir.peakIndex);
+    req->infoOut[1] = ir.inverted ? 1.0 : 0.0;
+  }
+  return n;
+}
+
+size_t rew_waterfall_request_size(void) {
+  return sizeof(rew_waterfall_request);
+}
+
+size_t rew_waterfall(const rew_waterfall_request* req) {
+  if (!req || !req->emitted || !req->recorded) return 0;
+  if (!req->magDbOut || req->sliceCap == 0 || req->points == 0) return 0;
+
+  WaterfallSpec spec;
+  if (req->fs > 0.0) spec.fs = req->fs;
+  if (req->slices > 0) spec.slices = req->slices;
+  if (req->sliceSpacingMs > 0.0) spec.sliceSpacingMs = req->sliceSpacingMs;
+  if (req->windowMs > 0.0) spec.windowMs = req->windowMs;
+  if (req->fMin > 0.0) spec.fMin = req->fMin;
+  if (req->fMax > 0.0) spec.fMax = req->fMax;
+  spec.points = req->points;
+  spec.slices = std::min(spec.slices, req->sliceCap);
+
+  // Enough tail to hold every slice, whatever was asked for.
+  const double needMs =
+      spec.sliceSpacingMs * static_cast<double>(spec.slices) + spec.windowMs + 50.0;
+  const ImpulseResponse ir =
+      impulseFrom(req->emitted, req->emittedLen, req->recorded,
+                  req->recordedLen, req->fs, 5.0, needMs);
+  if (!ir.valid) return 0;
+
+  const Waterfall w = computeWaterfall(ir, spec);
+  if (!w.valid) return 0;
+
+  const size_t pts = std::min(req->points, w.freqHz.size());
+  if (req->freqOut) {
+    for (size_t i = 0; i < pts; ++i) req->freqOut[i] = w.freqHz[i];
+  }
+  const size_t slices = std::min(req->sliceCap, w.magDb.size());
+  for (size_t s = 0; s < slices; ++s) {
+    if (req->timeMsOut) req->timeMsOut[s] = w.timeMs[s];
+    for (size_t i = 0; i < pts; ++i) {
+      req->magDbOut[s * req->points + i] = w.magDb[s][i];
+    }
+  }
+  return slices;
+}
+
+size_t rew_decay_request_size(void) { return sizeof(rew_decay_request); }
+
+size_t rew_decay(const rew_decay_request* req) {
+  if (!req || !req->emitted || !req->recorded) return 0;
+  if (!req->centerHzOut || req->cap == 0) return 0;
+
+  DecaySpec spec;
+  if (req->fs > 0.0) spec.fs = req->fs;
+  if (req->fMin > 0.0) spec.fMin = req->fMin;
+  if (req->fMax > 0.0) spec.fMax = req->fMax;
+  if (req->bandsPerOctave > 0.0) spec.bandsPerOctave = req->bandsPerOctave;
+
+  const ImpulseResponse ir =
+      impulseFrom(req->emitted, req->emittedLen, req->recorded,
+                  req->recordedLen, req->fs, 5.0, 1500.0);
+  if (!ir.valid) return 0;
+
+  const DecayResult d = analyzeDecay(ir, spec);
+  if (!d.valid) return 0;
+
+  const size_t n = std::min(req->cap, d.bands.size());
+  for (size_t i = 0; i < n; ++i) {
+    const BandDecay& b = d.bands[i];
+    req->centerHzOut[i] = b.centerHz;
+    if (req->rt60Out) req->rt60Out[i] = b.rt60Sec;
+    if (req->edtOut) req->edtOut[i] = b.edtSec;
+    if (req->straightnessOut) req->straightnessOut[i] = b.straightness;
+    if (req->usableRangeOut) req->usableRangeOut[i] = b.usableRangeDb;
+    if (req->basisOut) req->basisOut[i] = static_cast<double>(b.basis);
+  }
+  if (req->averageOut) req->averageOut[0] = d.averageRt60Sec;
   return n;
 }
 

@@ -11,6 +11,7 @@
 #include "rewcore/dsp.hpp"
 #include "rewcore/fft.hpp"
 #include "rewcore/peq.hpp"
+#include "rewcore/decay.hpp"
 #include "rewcore/distortion.hpp"
 #include "rewcore/rta.hpp"
 #include "rewcore/wav.hpp"
@@ -502,6 +503,263 @@ static void testConfidenceAndRepeatability() {
   // annihilated.
   CHECK(b.rationale[0].confidence > 0.25);
   CHECK(b.rationale[0].confidence < 0.7);
+}
+
+// Build a "recording" of a sweep through a system with a known exponential
+// decay: an impulse response that is a decaying oscillation. RT60 for a decay
+// of exp(-t/tau) is the time to fall 60 dB, which is tau * 60 / (20/ln 10)
+// = tau * ln(10^3) = 6.908 * tau.
+static std::vector<double> decayingIr(double fs, double tau, double ringHz,
+                                      std::size_t n) {
+  std::vector<double> ir(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    const double t = static_cast<double>(i) / fs;
+    ir[i] = std::exp(-t / tau) * std::cos(2.0 * M_PI * ringHz * t);
+  }
+  return ir;
+}
+
+static std::vector<double> convolveWith(const std::vector<double>& x,
+                                        const std::vector<double>& h) {
+  std::vector<double> y(x.size() + h.size(), 0.0);
+  for (std::size_t i = 0; i < x.size(); ++i) {
+    if (x[i] == 0.0) continue;
+    for (std::size_t k = 0; k < h.size(); ++k) y[i + k] += x[i] * h[k];
+  }
+  return y;
+}
+
+static void testLevelCheck() {
+  std::printf("test: level check gives a direction, not just a complaint\n");
+  const double fs = 48000;
+  const std::size_t n = static_cast<std::size_t>(fs);
+
+  // A frequency grid shared by the "signal" and the "noise", which is what the
+  // real path produces: the same analysis run twice.
+  auto flat = [](double db, std::size_t pts) {
+    FreqResponse fr;
+    for (std::size_t i = 0; i < pts; ++i) {
+      fr.freqHz.push_back(20.0 * std::pow(1000.0, static_cast<double>(i) / (pts - 1)));
+      fr.magDb.push_back(db);
+    }
+    return fr;
+  };
+
+  std::vector<double> sine(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    sine[i] = 0.25 * std::sin(2.0 * M_PI * 1000.0 * i / fs);
+  }
+
+  // Plenty of signal, plenty of headroom: nothing to say.
+  const LevelCheck good = assessLevel(sine, flat(-20, 64), flat(-60, 64), fs);
+  std::printf("  good: verdict %d, peak %.1f dBFS, median SNR %.0f dB, "
+              "suggest %+.1f dB\n",
+              static_cast<int>(good.verdict), good.peakDbfs, good.medianSnrDb,
+              good.suggestedChangeDb);
+  CHECK(good.verdict == LevelVerdict::good);
+  CHECK(good.suggestedChangeDb == 0.0);
+  CHECK(std::fabs(good.peakDbfs - (-12.04)) < 0.5);
+
+  // Same recording, but the sweep barely clears the car's noise. The advice
+  // must be to turn it UP, and by a sensible amount.
+  const LevelCheck quiet = assessLevel(sine, flat(-58, 64), flat(-60, 64), fs);
+  std::printf("  noise-limited: verdict %d, suggest %+.1f dB\n",
+              static_cast<int>(quiet.verdict), quiet.suggestedChangeDb);
+  CHECK(quiet.verdict == LevelVerdict::tooQuiet);
+  CHECK(quiet.suggestedChangeDb > 0.0);
+  // Never advise more than the headroom can take.
+  CHECK(quiet.suggestedChangeDb <= -3.0 - quiet.peakDbfs + 0.01);
+
+  // Clipping is reported as clipping and the advice is to come down, whatever
+  // the signal-to-noise says — a clipped capture is not rescued by being loud.
+  std::vector<double> clipped(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    clipped[i] = std::max(-1.0, std::min(1.0,
+        1.6 * std::sin(2.0 * M_PI * 1000.0 * i / fs)));
+  }
+  const LevelCheck hot = assessLevel(clipped, flat(-10, 64), flat(-60, 64), fs);
+  std::printf("  clipped: verdict %d, suggest %+.1f dB\n",
+              static_cast<int>(hot.verdict), hot.suggestedChangeDb);
+  CHECK(hot.verdict == LevelVerdict::clipping);
+  CHECK(hot.suggestedChangeDb < 0.0);
+
+  // Loud but not clipping is its own verdict: there is nothing wrong with the
+  // capture, there is just no room left.
+  std::vector<double> loud(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    loud[i] = 0.95 * std::sin(2.0 * M_PI * 1000.0 * i / fs);
+  }
+  const LevelCheck nearly = assessLevel(loud, flat(-10, 64), flat(-60, 64), fs);
+  std::printf("  no headroom: verdict %d, peak %.1f dBFS, suggest %+.1f dB\n",
+              static_cast<int>(nearly.verdict), nearly.peakDbfs,
+              nearly.suggestedChangeDb);
+  CHECK(nearly.verdict == LevelVerdict::tooLoud);
+  CHECK(nearly.suggestedChangeDb < 0.0);
+
+  // Silence is "nothing arrived", not "too quiet" — different problem,
+  // different fix (wrong channel soloed, rather than the volume).
+  const LevelCheck dead =
+      assessLevel(std::vector<double>(n, 0.0), flat(-60, 64), flat(-60, 64), fs);
+  CHECK(dead.verdict == LevelVerdict::noSignal);
+
+  // The usable band stops where the signal stops clearing the noise — which is
+  // how an SBC link's ceiling shows up.
+  FreqResponse rolled = flat(-20, 64);
+  for (std::size_t i = 0; i < rolled.freqHz.size(); ++i) {
+    if (rolled.freqHz[i] > 9000.0) rolled.magDb[i] = -58.0;
+  }
+  const LevelCheck limited = assessLevel(sine, rolled, flat(-60, 64), fs);
+  std::printf("  band-limited: usable to %.0f Hz, verdict %d\n",
+              limited.usableToHz, static_cast<int>(limited.verdict));
+  CHECK(limited.usableToHz > 4000.0);
+  CHECK(limited.usableToHz < 9500.0);
+
+  CHECK(assessLevel({}, flat(-20, 64), flat(-60, 64), fs).verdict ==
+        LevelVerdict::noSignal);
+}
+
+static void testImpulseAndStepResponse() {
+  std::printf("test: impulse and step response, and what polarity looks like\n");
+  SweepSpec spec;
+  spec.fs = 48000;
+  spec.f1 = 30;
+  spec.f2 = 16000;
+  spec.durationSec = 2.0;
+  const std::vector<double> sweep = generateExpSweep(spec);
+
+  // A pure delay: the impulse response should be one clean arrival.
+  const std::size_t delay = 480;  // 10 ms
+  std::vector<double> delayed(sweep.size() + delay, 0.0);
+  for (std::size_t i = 0; i < sweep.size(); ++i) delayed[i + delay] = sweep[i];
+
+  ImpulseSpec ispec;
+  ispec.fs = spec.fs;
+  ispec.preMs = 5;
+  ispec.postMs = 50;
+  const ImpulseResponse ir = computeImpulseResponse(sweep, delayed, ispec);
+  CHECK(ir.valid);
+  CHECK(!ir.inverted);
+  // The arrival is where the time axis says zero, and it is the largest sample.
+  CHECK(std::fabs(ir.timeMs[ir.peakIndex]) < 0.05);
+  CHECK(std::fabs(ir.samples[ir.peakIndex]) > 0.99);
+  double elsewhere = 0.0;
+  for (std::size_t i = 0; i < ir.samples.size(); ++i) {
+    if (i + 20 < ir.peakIndex || i > ir.peakIndex + 20) {
+      elsewhere = std::max(elsewhere, std::fabs(ir.samples[i]));
+    }
+  }
+  std::printf("  clean arrival: peak 1.00, largest elsewhere %.3f\n", elsewhere);
+  CHECK(elsewhere < 0.3);
+
+  // Inverting the recording must show up as an inverted arrival and a step
+  // that goes the wrong way first. This is the whole value of a step response.
+  std::vector<double> flipped(delayed.size());
+  for (std::size_t i = 0; i < delayed.size(); ++i) flipped[i] = -delayed[i];
+  const ImpulseResponse inv = computeImpulseResponse(sweep, flipped, ispec);
+  CHECK(inv.valid);
+  CHECK(inv.inverted);
+
+  const std::vector<double> stepOk = stepResponse(ir);
+  const std::vector<double> stepInv = stepResponse(inv);
+  CHECK(stepOk.size() == ir.samples.size());
+  // Just after the arrival, one rises and the other falls.
+  const std::size_t just = ir.peakIndex + 2;
+  std::printf("  step just after arrival: correct %+.2f, inverted %+.2f\n",
+              stepOk[just], stepInv[just]);
+  CHECK(stepOk[just] > 0.0);
+  CHECK(stepInv[just] < 0.0);
+
+  // The energy-time curve starts at its peak and falls away.
+  const std::vector<double> etc = energyTimeCurveDb(ir);
+  CHECK(etc.size() == ir.samples.size());
+  CHECK(etc[ir.peakIndex] > -1.0);
+  CHECK(etc[ir.samples.size() - 1] < -20.0);
+
+  CHECK(!computeImpulseResponse({}, {}, ispec).valid);
+}
+
+static void testDecayTimeAndWaterfall() {
+  std::printf("test: decay time recovered from a known exponential decay\n");
+  SweepSpec spec;
+  spec.fs = 48000;
+  spec.f1 = 30;
+  spec.f2 = 16000;
+  spec.durationSec = 3.0;
+  const std::vector<double> sweep = generateExpSweep(spec);
+
+  // tau = 0.05 s, so the true RT60 is 6.908 * 0.05 = 0.345 s. The ring is put
+  // at 250 Hz and the decay is checked in the band that contains it.
+  const double tau = 0.05;
+  const double expected = tau * std::log(1000.0);
+  const std::vector<double> h =
+      decayingIr(spec.fs, tau, 250.0, static_cast<std::size_t>(spec.fs * 0.6));
+  const std::vector<double> recorded = convolveWith(sweep, h);
+
+  ImpulseSpec ispec;
+  ispec.fs = spec.fs;
+  ispec.preMs = 5;
+  ispec.postMs = 600;
+  const ImpulseResponse ir = computeImpulseResponse(sweep, recorded, ispec);
+  CHECK(ir.valid);
+
+  DecaySpec dspec;
+  dspec.fs = spec.fs;
+  dspec.fMin = 125;
+  dspec.fMax = 500;
+  const DecayResult d = analyzeDecay(ir, dspec);
+  CHECK(d.valid);
+  CHECK(!d.bands.empty());
+
+  const BandDecay* at250 = nullptr;
+  for (const BandDecay& b : d.bands) {
+    if (std::fabs(b.centerHz - 250.0) < 40.0) at250 = &b;
+  }
+  CHECK(at250 != nullptr);
+  std::printf("  250 Hz band: RT60 %.3f s (expected %.3f), basis %d, "
+              "straightness %.3f, range %.0f dB\n",
+              at250->rt60Sec, expected, static_cast<int>(at250->basis),
+              at250->straightness, at250->usableRangeDb);
+  CHECK(at250->basis != DecayBasis::none);
+  CHECK(at250->rt60Sec > expected * 0.75);
+  CHECK(at250->rt60Sec < expected * 1.25);
+  // A clean exponential is a straight line on a Schroeder plot, so the fit
+  // should be near perfect. If this ever loosens, the fit is picking up noise.
+  CHECK(at250->straightness > 0.95);
+
+  // Waterfall: the ringing frequency is still there after the rest has gone.
+  WaterfallSpec wspec;
+  wspec.fs = spec.fs;
+  wspec.slices = 8;
+  wspec.sliceSpacingMs = 20;
+  wspec.windowMs = 80;
+  wspec.fMin = 100;
+  wspec.fMax = 800;
+  wspec.points = 48;
+  const Waterfall w = computeWaterfall(ir, wspec);
+  CHECK(w.valid);
+  CHECK(w.magDb.size() >= 4);
+  CHECK(w.freqHz.size() == wspec.points);
+  CHECK(w.magDb[0].size() == wspec.points);
+
+  // The first slice is referenced to 0 dB, and later slices are quieter.
+  double firstPeak = -240.0, latePeak = -240.0;
+  std::size_t ringBin = 0;
+  for (std::size_t i = 0; i < w.freqHz.size(); ++i) {
+    if (w.magDb[0][i] > firstPeak) {
+      firstPeak = w.magDb[0][i];
+      ringBin = i;
+    }
+    latePeak = std::max(latePeak, w.magDb.back()[i]);
+  }
+  std::printf("  waterfall: peak of first slice %.1f dB at %.0f Hz, "
+              "loudest of last slice %.1f dB\n",
+              firstPeak, w.freqHz[ringBin], latePeak);
+  CHECK(std::fabs(firstPeak) < 0.5);           // the reference
+  CHECK(latePeak < firstPeak - 6.0);           // it has decayed
+  CHECK(std::fabs(w.freqHz[ringBin] - 250.0) < 60.0);  // and it is the ring
+
+  CHECK(!computeWaterfall(ImpulseResponse{}, wspec).valid);
+  CHECK(!analyzeDecay(ImpulseResponse{}, dspec).valid);
 }
 
 static void testHarmonicDistortion() {
@@ -1394,6 +1652,9 @@ int main() {
   testConfidenceAndRepeatability();
   testResponseSpread();
   testCaptureQuality();
+  testLevelCheck();
+  testImpulseAndStepResponse();
+  testDecayTimeAndWaterfall();
   testHarmonicDistortion();
   testPolarityAndSummation();
   testRtaLevels();

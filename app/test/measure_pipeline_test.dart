@@ -163,6 +163,46 @@ void main() {
     expect(m.distortion, isNotNull);
   }, timeout: const Timeout(Duration(minutes: 2)));
 
+  test('the level check runs end to end and returns actionable advice',
+      () async {
+    final lc = await service.checkLevel(band: SweepBand.full);
+    // The mock plays a real sweep into a real analysis, so whatever verdict it
+    // reaches must be internally consistent: a verdict, a peak, and advice
+    // that points somewhere.
+    expect(lc.peakDbfs, lessThanOrEqualTo(0));
+    expect(lc.verdict.headline, isNotEmpty);
+    if (lc.verdict == LevelVerdict.good) {
+      expect(lc.suggestedChangeDb, 0);
+      expect(lc.readyToMeasure, isTrue);
+    } else {
+      expect(lc.suggestedChangeDb, isNot(0));
+    }
+
+    // Crucially it must NOT leave a measurement behind. A level check is the
+    // step before measuring; if it overwrote the last capture, checking the
+    // volume would quietly discard the measurement you had.
+    expect(service.lastRawCapture, isNull);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('the raw capture is kept so the time-domain views can be opened',
+      () async {
+    expect(service.lastRawCapture, isNull,
+        reason: 'nothing has been measured yet');
+    await service.measureOnce(band: SweepBand.full);
+    final raw = service.lastRawCapture;
+    expect(raw, isNotNull);
+    expect(raw!.emitted, isNotEmpty);
+    expect(raw.recorded, isNotEmpty);
+    expect(raw.fs, service.config.fs);
+
+    // It must be what was actually played, not a freshly generated sweep that
+    // merely looks like it — the deconvolution is only valid against the real
+    // stimulus.
+    final stimulus = await service.sweepFor(SweepBand.full);
+    expect(raw.emitted.length, stimulus.length);
+    expect(raw.emitted.first, stimulus.first);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
   test('EQ never recommends a cut deeper than asked, and reports the trim',
       () async {
     // A wide bass excess, the shape that produced a -12 dB subwoofer band.

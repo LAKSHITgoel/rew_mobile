@@ -17,6 +17,7 @@ add_library(rewcore_ffi SHARED
   ${CORE}/src/peq.cpp
   ${CORE}/src/rta.cpp
   ${CORE}/src/distortion.cpp
+  ${CORE}/src/decay.cpp
   ${CORE}/src/crossover.cpp
   ${CORE}/src/calibration.cpp
   ${CORE}/src/wav.cpp

@@ -245,6 +245,32 @@ class WizardController extends ChangeNotifier {
   // --- live mic check -------------------------------------------------------
   StreamSubscription<MicLevel>? _levelSub;
   MicLevel? micLevel;
+  /// The last level check, if one has been run. Kept so its verdict stays on
+  /// screen while the volume is adjusted and it is run again.
+  LevelCheck? levelCheck;
+  bool checkingLevel = false;
+  String? levelCheckError;
+
+  /// Play a short sweep and say whether the volume is right to measure at.
+  ///
+  /// Separate from measuring on purpose: the alternative is finding out the
+  /// level was wrong only after taking a curve, and then having to know to
+  /// distrust it. This makes it a step with an answer.
+  Future<void> runLevelCheck() async {
+    if (checkingLevel) return;
+    checkingLevel = true;
+    levelCheckError = null;
+    notifyListeners();
+    try {
+      levelCheck = await service.checkLevel(band: band);
+    } catch (e) {
+      levelCheckError = '$e';
+    } finally {
+      checkingLevel = false;
+      notifyListeners();
+    }
+  }
+
   bool monitoringMic = false;
 
   /// Starts/stops the input meter. Tapping the mic should visibly move it —

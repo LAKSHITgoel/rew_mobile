@@ -399,3 +399,92 @@ FreqResponse spatialAverage(const std::vector<FreqResponse>& measurements) {
 }
 
 }  // namespace rewcore
+
+namespace rewcore {
+
+LevelCheck assessLevel(const std::vector<double>& recorded,
+                       const FreqResponse& signal,
+                       const FreqResponse& noiseFloor, double fs,
+                       double minSnrDb) {
+  LevelCheck out;
+  if (recorded.empty()) return out;
+
+  const CaptureQuality q = assessCapture(recorded, fs);
+  out.peakDbfs = q.peak > 0.0 ? 20.0 * std::log10(q.peak) : -240.0;
+  out.rmsDbfs = q.rmsDbfs;
+
+  // Nothing arrived at all. Said first, because every other verdict would be
+  // a statement about silence.
+  if (q.mostlySilent || q.rmsDbfs < -70.0) {
+    out.verdict = LevelVerdict::noSignal;
+    out.suggestedChangeDb = 12.0;
+    return out;
+  }
+  if (q.clipped) {
+    out.verdict = LevelVerdict::clipping;
+    // Enough to get clear of the ceiling rather than just under it.
+    out.suggestedChangeDb = -6.0;
+    return out;
+  }
+
+  // Signal-to-noise, per point, over the part of the band both curves cover.
+  std::vector<double> snr;
+  const std::size_t n = std::min(signal.freqHz.size(), noiseFloor.freqHz.size());
+  double highest = 0.0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const double v = signal.magDb[i] - noiseFloor.magDb[i];
+    snr.push_back(v);
+    // The usable band runs upward from the bottom and stops at the first
+    // sustained failure, not at whatever isolated point happens to pass higher
+    // up. A single lucky bin above the cutoff is not bandwidth.
+    if (v >= minSnrDb) {
+      if (i + 1 >= n || signal.magDb[i + 1] - noiseFloor.magDb[i + 1] >= minSnrDb) {
+        highest = signal.freqHz[i];
+      }
+    } else if (highest > 0.0 && i + 1 < n &&
+               signal.magDb[i + 1] - noiseFloor.magDb[i + 1] < minSnrDb) {
+      break;
+    }
+  }
+  out.usableToHz = highest;
+
+  if (!snr.empty()) {
+    std::vector<double> sorted = snr;
+    std::sort(sorted.begin(), sorted.end());
+    out.medianSnrDb = sorted[sorted.size() / 2];
+  }
+
+  // Headroom. Peaking above -3 dBFS is not clipping yet, but a car is not a
+  // repeatable environment and the next capture may not be so lucky.
+  if (out.peakDbfs > -3.0) {
+    out.verdict = LevelVerdict::tooLoud;
+    out.suggestedChangeDb = -(out.peakDbfs + 12.0);
+    return out;
+  }
+
+  if (out.medianSnrDb < minSnrDb) {
+    out.verdict = LevelVerdict::tooQuiet;
+    // Ask for enough to clear the margin with something to spare, but never
+    // more than the headroom allows.
+    const double wanted = (minSnrDb + 10.0) - out.medianSnrDb;
+    out.suggestedChangeDb = std::min(wanted, -3.0 - out.peakDbfs);
+    return out;
+  }
+
+  // Enough signal, but the top of the band has run out before the sweep did.
+  // In a car this is usually the codec rather than the volume, so the advice
+  // is deliberately small: turning it up will not move an SBC ceiling.
+  if (out.medianSnrDb < minSnrDb + 10.0 ||
+      (out.usableToHz > 0.0 && out.usableToHz < 8000.0)) {
+    out.verdict = LevelVerdict::marginal;
+    out.suggestedChangeDb =
+        std::min(6.0, std::max(0.0, -3.0 - out.peakDbfs));
+    return out;
+  }
+
+  out.verdict = LevelVerdict::good;
+  out.suggestedChangeDb = 0.0;
+  return out;
+}
+
+}  // namespace rewcore
