@@ -40,32 +40,49 @@ class _WizardScreenState extends State<WizardScreen> {
   /// speaker) and the app would save a confident-looking curve of nothing useful.
   /// The mic panel already said "No microphone detected", but nothing stopped a
   /// measurement, so ask outright rather than record a measurement of the phone.
+  /// Set once the user has said they know the mic is missing. Asking again
+  /// before every measurement turns a useful check into nagging, and a prompt
+  /// people learn to dismiss is worse than no prompt at all.
+  bool _micWarningAccepted = false;
+
   Future<void> _measure(Future<void> Function() run) async {
     await c.refreshMic();
     if (!mounted) return;
-    if (!(c.mic?.connected ?? false)) {
+
+    if (!(c.mic?.connected ?? false) && !_micWarningAccepted) {
+      // Check once more before saying anything. Enumerating audio devices right
+      // after another session has closed can miss a mic that is plugged in, and
+      // a false alarm here trains people to tap straight past a real one.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await c.refreshMic();
+      if (!mounted) return;
+    }
+
+    if (!(c.mic?.connected ?? false) && !_micWarningAccepted) {
       final ok = await showDialog<bool>(
             context: context,
             builder: (ctx) => AlertDialog(
-              title: const Text('No UMIK-1 detected'),
+              title: const Text('Measuring without the UMIK-1'),
               content: const Text(
-                  'Android will fall back to the phone\'s built-in microphone, '
-                  'which is not calibrated and is not where you listen — the '
-                  'result will not be a measurement of your car.\n\n'
-                  'Plug the mic in over USB OTG and tap Refresh, or continue '
-                  'anyway to test the app itself.'),
+                  'The measurement microphone is not plugged in, so the phone '
+                  'would record with its own — which is not calibrated and is '
+                  'not where you sit. The result would not describe your car.\n\n'
+                  'Plug it in over USB OTG, or carry on if you are just trying '
+                  'the app out.'),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('Cancel')),
+                    child: const Text('Wait, let me plug it in')),
                 TextButton(
                     onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('Measure anyway')),
+                    child: const Text('Carry on without it')),
               ],
             ),
           ) ??
           false;
       if (!ok || !mounted) return;
+      // Asked and answered for this session.
+      _micWarningAccepted = true;
     }
     await run();
   }
