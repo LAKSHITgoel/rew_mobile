@@ -366,6 +366,32 @@ class Rewcore {
     }
   }
 
+  /// Re-smooth a stored response.
+  ///
+  /// Only ever coarsens: the stored curve was already smoothed when it was
+  /// measured, and nothing can recover detail that was averaged away then.
+  FreqResponse smooth(FreqResponse fr, double fractionOfOctave) {
+    final n = fr.length;
+    if (n == 0 || fractionOfOctave <= 0) return fr;
+    final freq = calloc<ffi.Double>(n);
+    final mag = calloc<ffi.Double>(n);
+    final out = calloc<ffi.Double>(n);
+    try {
+      freq.asTypedList(n).setAll(0, fr.freqHz);
+      mag.asTypedList(n).setAll(0, fr.magDb);
+      final count = _b.rewSmoothResponse(freq, mag, n, fractionOfOctave, out);
+      if (count == 0) return fr;
+      return FreqResponse(
+        List<double>.from(fr.freqHz),
+        List<double>.from(out.asTypedList(count)),
+      );
+    } finally {
+      calloc.free(freq);
+      calloc.free(mag);
+      calloc.free(out);
+    }
+  }
+
   /// Check a raw capture before anything is inferred from it.
   CaptureQuality assessCapture(Float64List samples, double fs) {
     if (samples.isEmpty) {

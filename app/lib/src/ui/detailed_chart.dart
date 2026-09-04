@@ -55,11 +55,21 @@ class DetailedFrChart extends StatefulWidget {
     this.phaseMin = -180,
     this.phaseMax = 180,
     this.fill = false,
+    this.onSmoothing,
+    this.smoothFrac = 24,
   });
 
   /// Take all the room available instead of a 4:3 box. Used by the fullscreen
   /// view, where the plot is the whole point of the screen.
   final bool fill;
+
+  /// Called when the smoothing control changes, so the screen that owns the
+  /// traces can re-smooth them. The chart does not do it itself: smoothing is
+  /// measurement maths and belongs in core, not in a painter.
+  final void Function(double fractionOfOctave)? onSmoothing;
+
+  /// Current smoothing, for showing in the control.
+  final double smoothFrac;
 
   final List<DetailedTrace> traces;
   final String title;
@@ -115,10 +125,13 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
   /// exactly where", and reading that off gridlines is guesswork.
   double? _cursorHz;
 
-  /// While on, dragging moves the cursor instead of panning. Explicit rather
-  /// than clever: a drag cannot mean two things at once, and guessing wrong
-  /// makes both gestures feel broken.
-  bool _cursorMode = false;
+  /// One finger reads, two fingers move.
+  ///
+  /// On a desktop the cursor follows the pointer and dragging pans, but a touch
+  /// screen has no hover, so the two have to be told apart by how many fingers
+  /// are down. Reading a value is the thing done constantly while tuning, so it
+  /// gets the single finger; panning and zooming get the pinch they already
+  /// needed anyway.
 
   /// Traces hidden by tapping their legend entry.
   final Set<String> _hidden = {};
@@ -235,7 +248,13 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
 
   void _onScaleUpdate(ScaleUpdateDetails d, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
-    if (_cursorMode) {
+    // Two fingers means move the view; one means read a value. The scale check
+    // is a belt-and-braces second signal: a real pinch always changes it, and
+    // relying on the pointer count alone would silently turn zooming off
+    // anywhere the count is reported low.
+    final movingView =
+        d.pointerCount >= 2 || (d.scale - 1).abs() > 0.01;
+    if (!movingView) {
       _setCursorFrom(d.localFocalPoint, size);
       return;
     }
@@ -311,10 +330,14 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
     setState(() => _cursorHz = math.exp(logLo + t * (logHi - logLo)));
   }
 
-  void _reset() => setState(() {
-        _fLo = _fHi = _dbLo = _dbHi = null;
-        _cursorHz = null;
-      });
+  void _reset() {
+    setState(() {
+      _fLo = _fHi = _dbLo = _dbHi = null;
+      _cursorHz = null;
+    });
+    // The boxes describe the view, so they follow it however it was changed.
+    _syncLimitFields();
+  }
 
   /// Type the range in. The presets cover the regions worth naming; this is
   /// for the times you want exactly 45 to 65 Hz because that is where the mode
@@ -372,12 +395,184 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
     });
   }
 
+  /// REW keeps the limits and smoothing beside the graph rather than behind a
+  /// menu, because they are adjusted constantly while reading a measurement —
+  /// set the window, look, set it again.
+  bool _controlsOpen = true;
+
+  final _topCtl = TextEditingController();
+  final _bottomCtl = TextEditingController();
+  final _leftCtl = TextEditingController();
+  final _rightCtl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Straight away rather than after a frame: the limits follow from the
+    // traces the moment the widget exists, and boxes that start empty read as
+    // "type something" instead of "this is the window you are looking at".
+    _syncLimitFields();
+  }
+
+  @override
+  void dispose() {
+    _topCtl.dispose();
+    _bottomCtl.dispose();
+    _leftCtl.dispose();
+    _rightCtl.dispose();
+    super.dispose();
+  }
+
+  void _syncLimitFields() {
+    _topCtl.text = dbHi.round().toString();
+    _bottomCtl.text = dbLo.round().toString();
+    _leftCtl.text = fLo.round().toString();
+    _rightCtl.text = fHi.round().toString();
+  }
+
+  void _applyLimits() {
+    final top = double.tryParse(_topCtl.text);
+    final bottom = double.tryParse(_bottomCtl.text);
+    final left = double.tryParse(_leftCtl.text);
+    final right = double.tryParse(_rightCtl.text);
+    setState(() {
+      if (top != null && bottom != null && top > bottom) {
+        _dbHi = top;
+        _dbLo = bottom;
+      }
+      if (left != null && right != null && right > left && left > 0) {
+        _fLo = left.clamp(widget.fMin, widget.fMax);
+        _fHi = right.clamp(widget.fMin, widget.fMax);
+      }
+      final hz = _cursorHz;
+      if (hz != null && (hz < fLo || hz > fHi)) _cursorHz = null;
+    });
+    _syncLimitFields();
+  }
+
+  Widget _controlsPanel() {
+    return Container(
+      width: 168,
+      margin: const EdgeInsets.only(left: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161A1F),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Expanded(
+                child: Text('Limits',
+                    style: TextStyle(
+                        color: Colors.white, fontSize: 12,
+                        fontWeight: FontWeight.bold)),
+              ),
+              GestureDetector(
+                onTap: () => setState(() => _controlsOpen = false),
+                child: const Icon(Icons.chevron_right,
+                    size: 18, color: Colors.white54),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            Row(children: [
+              Expanded(child: _limitField(_topCtl, 'Top dB')),
+              const SizedBox(width: 6),
+              Expanded(child: _limitField(_bottomCtl, 'Bottom')),
+            ]),
+            const SizedBox(height: 6),
+            Row(children: [
+              Expanded(child: _limitField(_leftCtl, 'Left Hz')),
+              const SizedBox(width: 6),
+              Expanded(child: _limitField(_rightCtl, 'Right Hz')),
+            ]),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _applyLimits,
+                style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    foregroundColor: Colors.white70),
+                child: const Text('Apply', style: TextStyle(fontSize: 12)),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () {
+                  _reset();
+                  _syncLimitFields();
+                },
+                style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero, foregroundColor: Colors.white54),
+                child: const Text('Fit to data', style: TextStyle(fontSize: 12)),
+              ),
+            ),
+            if (widget.onSmoothing != null) ...[
+              const Divider(height: 20, color: Colors.white12),
+              const Text('Smoothing',
+                  style: TextStyle(
+                      color: Colors.white, fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+              DropdownButton<double>(
+                value: widget.smoothFrac,
+                isExpanded: true,
+                dropdownColor: const Color(0xFF1B1F24),
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                items: const [
+                  DropdownMenuItem(value: 48.0, child: Text('1/48 octave')),
+                  DropdownMenuItem(value: 24.0, child: Text('1/24 octave')),
+                  DropdownMenuItem(value: 12.0, child: Text('1/12 octave')),
+                  DropdownMenuItem(value: 6.0, child: Text('1/6 octave')),
+                  DropdownMenuItem(value: 3.0, child: Text('1/3 octave')),
+                  DropdownMenuItem(value: 1.0, child: Text('1 octave')),
+                ],
+                onChanged: (v) {
+                  if (v != null) widget.onSmoothing!(v);
+                },
+              ),
+              const Text(
+                'Only coarsens — detail averaged away when the measurement was '
+                'taken cannot come back.',
+                style: TextStyle(color: Colors.white38, fontSize: 10),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _limitField(TextEditingController c, String label) => TextField(
+        controller: c,
+        keyboardType: const TextInputType.numberWithOptions(signed: true),
+        style: const TextStyle(color: Colors.white, fontSize: 12),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white54, fontSize: 10),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
+          border: const OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _applyLimits(),
+      );
+
   Widget _plot() {
     final chart = LayoutBuilder(builder: (context, box) {
       final size = Size(box.maxWidth, box.maxHeight);
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onScaleStart: _onScaleStart,
+        onScaleStart: (d) {
+          _onScaleStart(d);
+          // Touching anywhere reads that frequency straight away, rather than
+          // needing a drag to wake the cursor up.
+          if (d.pointerCount < 2) _setCursorFrom(d.localFocalPoint, size);
+        },
         onScaleUpdate: (d) => _onScaleUpdate(d, size),
         child: CustomPaint(
           painter: _DetailedPainter(
@@ -512,15 +707,6 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
               ),
               const SizedBox(width: 6),
               _chip(
-                label: 'Cursor',
-                selected: _cursorMode,
-                onTap: () => setState(() {
-                  _cursorMode = !_cursorMode;
-                  if (!_cursorMode) _cursorHz = null;
-                }),
-              ),
-              const SizedBox(width: 10),
-              _chip(
                 label: 'Range…',
                 selected: false,
                 onTap: _askRange,
@@ -533,6 +719,8 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
                   onTap: () => setState(() {
                     _fLo = r.fLo;
                     _fHi = r.fHi;
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _syncLimitFields());
                     // A readout for a frequency that is no longer on screen is
                     // just a wrong number sitting above the chart.
                     final hz = _cursorHz;
@@ -547,7 +735,18 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
           ),
           if (_cursorHz != null) _readoutPanel(),
           const SizedBox(height: 6),
-          if (widget.fill) Expanded(child: _plot()) else _plot(),
+          if (widget.fill)
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _plot()),
+                  if (_controlsOpen) _controlsPanel(),
+                ],
+              ),
+            )
+          else
+            _plot(),
           const SizedBox(height: 8),
           Wrap(spacing: 14, runSpacing: 4, children: [
             for (final t in widget.traces)

@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 
 import '../models/measurement.dart';
 import '../models/project.dart';
+import '../ffi/rewcore.dart';
 import '../platform/file_picker.dart';
 import '../services/project_store.dart';
 import 'detailed_chart.dart';
@@ -25,6 +26,7 @@ class MeasurementDetailScreen extends StatefulWidget {
     required this.subtitle,
     required this.traces,
     this.store,
+    this.core,
   });
 
   final String title;
@@ -36,6 +38,9 @@ class MeasurementDetailScreen extends StatefulWidget {
   /// help, and where — and it was impossible: every measurement lived alone in
   /// its own tune.
   final ProjectStore? store;
+
+  /// For re-smoothing on the fullscreen graph.
+  final Rewcore? core;
 
   @override
   State<MeasurementDetailScreen> createState() =>
@@ -343,6 +348,7 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
                     traces: _allTraces,
                     title: widget.title,
                     subtitle: widget.subtitle,
+                    core: widget.core,
                   ),
                 ),
               ),

@@ -296,6 +296,12 @@ typedef _RewAssessCaptureC = ffi.Int Function(
 typedef RewAssessCaptureDart = int Function(
     ffi.Pointer<ffi.Double>, int, double, ffi.Pointer<ffi.Double>);
 
+// size_t rew_smooth_response(freq*, mag*, n, fractionOfOctave, out*);
+typedef _RewSmoothResponseC = ffi.Size Function(ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, ffi.Size, ffi.Double, ffi.Pointer<ffi.Double>);
+typedef RewSmoothResponseDart = int Function(ffi.Pointer<ffi.Double>,
+    ffi.Pointer<ffi.Double>, int, double, ffi.Pointer<ffi.Double>);
+
 // size_t rew_response_spread(mags*, count, n, out*);
 typedef _RewResponseSpreadC = ffi.Size Function(
     ffi.Pointer<ffi.Double>, ffi.Size, ffi.Size, ffi.Pointer<ffi.Double>);
@@ -357,6 +363,9 @@ class RewcoreBindings {
         rewAssessCapture =
             lib.lookupFunction<_RewAssessCaptureC, RewAssessCaptureDart>(
                 'rew_assess_capture'),
+        rewSmoothResponse =
+            lib.lookupFunction<_RewSmoothResponseC, RewSmoothResponseDart>(
+                'rew_smooth_response'),
         rewResponseSpread =
             lib.lookupFunction<_RewResponseSpreadC, RewResponseSpreadDart>(
                 'rew_response_spread'),
@@ -373,6 +382,7 @@ class RewcoreBindings {
   final RewFitPeqDart rewFitPeq;
   final RewPeqRequestSizeDart rewPeqRequestSize;
   final RewResponseSpreadDart rewResponseSpread;
+  final RewSmoothResponseDart rewSmoothResponse;
   final RewAssessCaptureDart rewAssessCapture;
   final RewRecommendCrossoverDart rewRecommendCrossover;
   final RewCrossoverResultSizeDart rewCrossoverResultSize;

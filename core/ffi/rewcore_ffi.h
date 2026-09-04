@@ -38,6 +38,14 @@ REW_EXPORT double rew_rms_dbfs(const double* samples, size_t n);
 // Per-point standard deviation, in dB, across `count` responses of `n` points
 // each (magnitudes laid out contiguously). This is measurement repeatability;
 // feed it to rew_fit_peq so unrepeatable features are not "corrected".
+// Re-smooth a stored response, for changing smoothing on a measurement that has
+// already been taken. Note it can only ever coarsen: the stored curve is
+// already smoothed, and nothing here can recover detail that was averaged away
+// when it was measured.
+REW_EXPORT size_t rew_smooth_response(const double* freq, const double* mag,
+                                      size_t n, double fractionOfOctave,
+                                      double* out);
+
 REW_EXPORT size_t rew_response_spread(const double* mags, size_t count, size_t n,
                                       double* out);
 

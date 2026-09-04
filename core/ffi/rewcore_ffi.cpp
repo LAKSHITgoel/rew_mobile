@@ -119,6 +119,20 @@ int rew_assess_capture(const double* samples, size_t n, double fs, double* out) 
   return flags;
 }
 
+size_t rew_smooth_response(const double* freq, const double* mag, size_t n,
+                           double fractionOfOctave, double* out) {
+  if (!freq || !mag || !out || n == 0) return 0;
+  FreqResponse fr;
+  fr.freqHz.assign(freq, freq + n);
+  fr.magDb.assign(mag, mag + n);
+  const FreqResponse smoothed =
+      fractionOfOctave > 0.0 ? smoothFractionalOctave(fr, fractionOfOctave) : fr;
+  for (size_t i = 0; i < n && i < smoothed.magDb.size(); ++i) {
+    out[i] = smoothed.magDb[i];
+  }
+  return smoothed.magDb.size();
+}
+
 size_t rew_response_spread(const double* mags, size_t count, size_t n,
                            double* out) {
   if (!mags || !out || count == 0 || n == 0) return 0;

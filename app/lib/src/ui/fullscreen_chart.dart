@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../ffi/rewcore.dart';
 import 'detailed_chart.dart';
 
 class FullscreenChartScreen extends StatefulWidget {
@@ -19,17 +20,44 @@ class FullscreenChartScreen extends StatefulWidget {
     required this.traces,
     required this.title,
     this.subtitle = '',
+    this.core,
+    this.smoothFrac = 24,
   });
 
   final List<DetailedTrace> traces;
   final String title;
   final String subtitle;
 
+  /// Re-smoothing needs the core, which the chart deliberately cannot reach.
+  final Rewcore? core;
+  final double smoothFrac;
+
   @override
   State<FullscreenChartScreen> createState() => _FullscreenChartScreenState();
 }
 
 class _FullscreenChartScreenState extends State<FullscreenChartScreen> {
+  late double _smooth = widget.smoothFrac;
+  late List<DetailedTrace> _traces = widget.traces;
+
+  void _resmooth(double fraction) {
+    final core = widget.core;
+    if (core == null) return;
+    setState(() {
+      _smooth = fraction;
+      _traces = [
+        for (final t in widget.traces)
+          DetailedTrace(
+            core.smooth(t.response, fraction),
+            t.color,
+            t.label,
+            showPhase: t.showPhase,
+            dashed: t.dashed,
+          ),
+      ];
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -60,10 +88,12 @@ class _FullscreenChartScreenState extends State<FullscreenChartScreen> {
           children: [
             Positioned.fill(
               child: DetailedFrChart(
-                traces: widget.traces,
+                traces: _traces,
                 title: widget.title,
                 subtitle: widget.subtitle,
                 fill: true,
+                smoothFrac: _smooth,
+                onSmoothing: widget.core == null ? null : _resmooth,
               ),
             ),
             Positioned(
