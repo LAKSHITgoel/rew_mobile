@@ -44,7 +44,7 @@ void main() {
     final rta = core.openRta(
       fs: 48000,
       fftSize: 8192,
-      averaging: 1,
+      averaging: RtaAveraging.none,
       smoothFrac: 0,
       pinkWeighted: false,
     );
@@ -67,7 +67,7 @@ void main() {
 
   test('averaging settles toward a steady input, and reset clears it', () {
     final rta = core.openRta(
-        fs: 48000, fftSize: 4096, averaging: 0.3, pinkWeighted: false);
+        fs: 48000, fftSize: 4096, averaging: RtaAveraging.exponential, averageCount: 4, pinkWeighted: false);
     try {
       rta.push(_sine(1000, 0.1, 8192, 48000));
       final first = rta.spectrum();
@@ -89,7 +89,7 @@ void main() {
 
   test('peak hold remembers a burst the average forgets', () {
     final rta = core.openRta(
-        fs: 48000, fftSize: 4096, averaging: 0.5, smoothFrac: 0,
+        fs: 48000, fftSize: 4096, averaging: RtaAveraging.exponential, averageCount: 2, smoothFrac: 0,
         pinkWeighted: false);
     try {
       // One loud burst at 5 kHz, then a long quiet stretch at 1 kHz.

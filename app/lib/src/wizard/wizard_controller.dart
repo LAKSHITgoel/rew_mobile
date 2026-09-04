@@ -339,12 +339,17 @@ class WizardController extends ChangeNotifier {
   }
 
   /// Parse and apply a pasted/loaded UMIK-1 calibration file.
+  /// Set by the app so a calibration loaded here is also available to the
+  /// real-time analyser: it belongs to the microphone, not to one tune.
+  void Function(MicCalibration)? onCalibrationLoaded;
+
   void loadCalibration(String text) {
     final cal = MicCalibration.parse(text);
     if (cal.isEmpty) {
       status = 'Calibration file had no usable points.';
     } else {
       service.calibration = cal;
+      onCalibrationLoaded?.call(cal);
       calibrationSummary =
           '${cal.freqHz.length} points, ${cal.freqHz.first.toStringAsFixed(0)}–'
           '${cal.freqHz.last.toStringAsFixed(0)} Hz'

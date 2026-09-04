@@ -6,6 +6,7 @@
 // tuning sequence and is always one tap away instead.
 import 'package:flutter/material.dart';
 
+import '../models/measurement.dart';
 import '../wizard/rta_controller.dart';
 import 'fr_chart.dart';
 
@@ -16,6 +17,12 @@ class RtaScreen extends StatefulWidget {
   @override
   State<RtaScreen> createState() => _RtaScreenState();
 }
+
+Widget _label(BuildContext context, String text) => Text(text,
+    style: Theme.of(context)
+        .textTheme
+        .bodyMedium
+        ?.copyWith(fontWeight: FontWeight.bold));
 
 class _RtaScreenState extends State<RtaScreen> {
   RtaController get c => widget.controller;
@@ -106,44 +113,111 @@ class _RtaScreenState extends State<RtaScreen> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const Divider(height: 28),
-              Text('Response speed',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
-              DropdownButton<RtaSpeed>(
-                value: c.speed,
+              _label(context, 'Display'),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Octave bands'),
+                subtitle: Text(c.octaveBands
+                    ? 'Energy summed into 1/${c.bandsPerOctave.round()} octave '
+                        'bands — how an RTA is normally read'
+                    : 'Raw FFT lines'),
+                value: c.octaveBands,
+                onChanged: (v) => c.reconfigure(octaveBands: v),
+              ),
+              if (c.octaveBands)
+                DropdownButton<double>(
+                  value: c.bandsPerOctave,
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(value: 1.0, child: Text('1 octave')),
+                    DropdownMenuItem(value: 3.0, child: Text('1/3 octave')),
+                    DropdownMenuItem(value: 6.0, child: Text('1/6 octave')),
+                    DropdownMenuItem(value: 12.0, child: Text('1/12 octave')),
+                    DropdownMenuItem(value: 24.0, child: Text('1/24 octave')),
+                    DropdownMenuItem(value: 48.0, child: Text('1/48 octave')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) c.reconfigure(bandsPerOctave: v);
+                  },
+                )
+              else
+                DropdownButton<double>(
+                  value: c.smoothFrac,
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(value: 0.0, child: Text('No smoothing')),
+                    DropdownMenuItem(value: 24.0, child: Text('1/24 octave')),
+                    DropdownMenuItem(value: 12.0, child: Text('1/12 octave')),
+                    DropdownMenuItem(value: 6.0, child: Text('1/6 octave')),
+                    DropdownMenuItem(value: 3.0, child: Text('1/3 octave')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) c.reconfigure(smoothFrac: v);
+                  },
+                ),
+              const SizedBox(height: 12),
+              _label(context, 'Averaging'),
+              DropdownButton<RtaAveraging>(
+                value: c.averaging,
                 isExpanded: true,
                 items: [
-                  for (final s in RtaSpeed.values)
-                    DropdownMenuItem(value: s, child: Text(s.label)),
+                  for (final a in RtaAveraging.values)
+                    DropdownMenuItem(value: a, child: Text(a.label)),
                 ],
                 onChanged: (v) {
-                  if (v != null) c.reconfigure(speed: v);
+                  if (v != null) c.reconfigure(averaging: v);
                 },
               ),
-              Text(c.speed.description,
+              Text(c.averaging.description,
+                  style: Theme.of(context).textTheme.bodySmall),
+              if (c.averaging == RtaAveraging.exponential)
+                DropdownButton<int>(
+                  value: c.averageCount,
+                  isExpanded: true,
+                  items: [
+                    for (final n in kRtaAverageCounts)
+                      DropdownMenuItem(value: n, child: Text('$n averages')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) c.reconfigure(averageCount: v);
+                  },
+                ),
+              const SizedBox(height: 12),
+              _label(context, 'Level weighting'),
+              DropdownButton<SplWeighting>(
+                value: c.weighting,
+                isExpanded: true,
+                items: [
+                  for (final w in SplWeighting.values)
+                    DropdownMenuItem(value: w, child: Text(w.label)),
+                ],
+                onChanged: (v) {
+                  if (v != null) c.reconfigure(weighting: v);
+                },
+              ),
+              Text(c.weighting.description,
                   style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 12),
-              Text('Smoothing',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
-              DropdownButton<double>(
-                value: c.smoothFrac,
+              _label(context, 'FFT length'),
+              DropdownButton<int>(
+                value: c.fftSize,
                 isExpanded: true,
-                items: const [
-                  DropdownMenuItem(value: 0.0, child: Text('None (raw FFT)')),
-                  DropdownMenuItem(value: 24.0, child: Text('1/24 octave')),
-                  DropdownMenuItem(value: 12.0, child: Text('1/12 octave')),
-                  DropdownMenuItem(value: 6.0, child: Text('1/6 octave')),
-                  DropdownMenuItem(value: 3.0, child: Text('1/3 octave')),
+                items: [
+                  for (final n in kRtaFftSizes)
+                    DropdownMenuItem(
+                        value: n,
+                        child: Text('$n  ·  '
+                            '${(48000 / n).toStringAsFixed(1)} Hz per bin')),
                 ],
                 onChanged: (v) {
-                  if (v != null) c.reconfigure(smoothFrac: v);
+                  if (v != null) c.reconfigure(fftSize: v);
                 },
               ),
+              Text(
+                  'Longer resolves modes that sit close together, but responds '
+                  'more slowly because each block covers more time.',
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Pink weighting'),

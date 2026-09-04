@@ -253,26 +253,46 @@ class Rewcore {
     double fs = 48000,
     int fftSize = 16384,
     double overlap = 0.5,
-    double averaging = 0.2,
+    RtaAveraging averaging = RtaAveraging.exponential,
+    int averageCount = 8,
     double smoothFrac = 6,
+    bool octaveBands = false,
+    double bandsPerOctave = 24,
+    SplWeighting weighting = SplWeighting.z,
     bool pinkWeighted = true,
     double fMin = 20,
     double fMax = 20000,
     int points = 0,
+    MicCalibration? calibration,
   }) {
     final cfg = calloc<RewRtaConfig>();
+    final cal = calibration;
+    final haveCal = cal != null && !cal.isEmpty;
+    final calF = haveCal ? calloc<ffi.Double>(cal.freqHz.length) : ffi.nullptr;
+    final calG = haveCal ? calloc<ffi.Double>(cal.gainDb.length) : ffi.nullptr;
     try {
+      if (haveCal) {
+        calF.asTypedList(cal.freqHz.length).setAll(0, cal.freqHz);
+        calG.asTypedList(cal.gainDb.length).setAll(0, cal.gainDb);
+      }
       cfg.ref
         ..fs = fs
         ..overlap = overlap
-        ..averaging = averaging
         // The C side reads <0 as "no smoothing" and 0 as "use the default",
         // since 0 cannot mean both.
         ..smoothFrac = smoothFrac <= 0 ? -1 : smoothFrac
         ..fMin = fMin
         ..fMax = fMax
+        ..bandsPerOctave = bandsPerOctave
+        ..calFreqHz = calF.cast<ffi.Double>()
+        ..calGainDb = calG.cast<ffi.Double>()
+        ..calN = haveCal ? cal.freqHz.length : 0
         ..fftSize = fftSize
         ..points = points
+        ..averagingMode = averaging.code
+        ..averageCount = averageCount
+        ..octaveBands = octaveBands ? 1 : 0
+        ..weighting = weighting.code
         ..pinkWeighted = pinkWeighted ? 1 : 0;
       final handle = _b.rewRtaCreate(cfg);
       if (handle == ffi.nullptr) {
@@ -281,6 +301,10 @@ class Rewcore {
       return RtaSession._(_b, handle, fftSize ~/ 2);
     } finally {
       calloc.free(cfg);
+      if (haveCal) {
+        calloc.free(calF);
+        calloc.free(calG);
+      }
     }
   }
 

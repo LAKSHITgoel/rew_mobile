@@ -41,7 +41,19 @@ class _HomeScreenState extends State<HomeScreen> {
       audio: widget.services.audio,
       core: widget.services.core,
     );
+    // Reuse whatever mic calibration and SPL offset the last tune had, so the
+    // analyser shows the car rather than the microphone, and reads in SPL if
+    // that was calibrated.
+    final tunes = await widget.services.store.list();
+    if (tunes.isNotEmpty) {
+      controller.splOffsetDb = tunes.first.splOffsetDb;
+    }
+    controller.calibration = widget.services.calibration;
     _rta = controller;
+    if (!mounted) {
+      controller.dispose();
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => RtaScreen(controller: controller)),
     );
@@ -69,7 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
       service: MeasurementService(widget.services.core, widget.services.audio),
       store: widget.services.store,
       project: project,
-    );
+    )..onCalibrationLoaded = (cal) => widget.services.calibration = cal;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => WizardScreen(controller: controller)),
     );

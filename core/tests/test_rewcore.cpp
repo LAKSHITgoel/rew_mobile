@@ -508,7 +508,7 @@ static void testRtaLevels() {
   RtaConfig cfg;
   cfg.fs = 48000.0;
   cfg.fftSize = 8192;
-  cfg.averaging = 1.0;      // no time smoothing, so one block is deterministic
+  cfg.averagingMode = RtaAveraging::none;  // one block, deterministic
   cfg.smoothFrac = 0.0;     // raw bins, so the peak is not spread by smoothing
   cfg.pinkWeighted = false; // absolute levels
   RtaAnalyzer rta(cfg);
@@ -544,7 +544,7 @@ static void testRtaPinkWeightingAndPeakHold() {
   RtaConfig cfg;
   cfg.fs = 48000.0;
   cfg.fftSize = 8192;
-  cfg.averaging = 0.3;
+  cfg.averageCount = 4;
   cfg.smoothFrac = 3.0;   // broad bands, to see the trend rather than the noise
   cfg.pinkWeighted = true;
   RtaAnalyzer rta(cfg);
@@ -590,6 +590,95 @@ static void testRtaPinkWeightingAndPeakHold() {
   rta.resetPeakHold();
   rta.resetAveraging();
   CHECK(!rta.hasSpectrum());
+}
+
+static void testRtaLikeRew() {
+  std::printf("test: RTA matches REW's behaviour — calibration, bands, averaging\n");
+  const double fs = 48000.0;
+  const std::size_t n = 8192 * 4;
+  std::vector<double> tone(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    tone[i] = 0.1 * std::sin(2.0 * M_PI * 1000.0 * i / fs);
+  }
+
+  // 1. The microphone calibration must be applied, or the display shows the
+  //    microphone as much as the car. A file claiming the mic reads 6 dB hot at
+  //    1 kHz must pull the displayed level down by 6 dB.
+  RtaConfig plain;
+  plain.fs = fs;
+  plain.fftSize = 8192;
+  plain.averagingMode = RtaAveraging::none;
+  plain.smoothFrac = 0.0;
+  plain.pinkWeighted = false;
+  RtaAnalyzer a(plain);
+  a.push(tone.data(), tone.size());
+
+  RtaConfig calibrated = plain;
+  calibrated.calFreqHz = {20.0, 20000.0};
+  calibrated.calGainDb = {6.0, 6.0};
+  RtaAnalyzer b(calibrated);
+  b.push(tone.data(), tone.size());
+
+  auto peakOf = [](const FreqResponse& fr) {
+    std::size_t p = 0;
+    for (std::size_t i = 1; i < fr.magDb.size(); ++i) {
+      if (fr.magDb[i] > fr.magDb[p]) p = i;
+    }
+    return fr.magDb[p];
+  };
+  CHECK_NEAR(peakOf(a.spectrum()) - peakOf(b.spectrum()), 6.0, 0.2);
+
+  // 2. Octave bands sum the energy in each interval, and land on the standard
+  //    centres — a 1 kHz tone belongs in the 1 kHz band.
+  RtaConfig bands = plain;
+  bands.octaveBands = true;
+  bands.bandsPerOctave = 3.0;
+  RtaAnalyzer c(bands);
+  c.push(tone.data(), tone.size());
+  const FreqResponse fr = c.spectrum();
+  CHECK(!fr.freqHz.empty());
+  std::size_t peak = 0;
+  for (std::size_t i = 1; i < fr.magDb.size(); ++i) {
+    if (fr.magDb[i] > fr.magDb[peak]) peak = i;
+  }
+  std::printf("  1/3 octave: %zu bands, loudest at %.0f Hz\n", fr.freqHz.size(),
+              fr.freqHz[peak]);
+  CHECK_NEAR(fr.freqHz[peak], 1000.0, 1.0);
+  // Roughly 30 bands across 20 Hz - 20 kHz at 1/3 octave.
+  CHECK(fr.freqHz.size() > 25 && fr.freqHz.size() < 35);
+  // The band holds the tone's real level, not a smeared fraction of it.
+  CHECK_NEAR(fr.magDb[peak], 20.0 * std::log10(0.1), 1.0);
+
+  // 3. "Forever" is a true cumulative mean: feeding a quiet signal after a loud
+  //    one must pull it part of the way, not replace it.
+  RtaConfig forever = plain;
+  forever.averagingMode = RtaAveraging::forever;
+  RtaAnalyzer d(forever);
+  d.push(tone.data(), tone.size());
+  const double afterLoud = peakOf(d.spectrum());
+  std::vector<double> quiet(n);
+  for (std::size_t i = 0; i < n; ++i) quiet[i] = tone[i] * 0.1;  // 20 dB down
+  d.push(quiet.data(), quiet.size());
+  const double afterQuiet = peakOf(d.spectrum());
+  CHECK(afterQuiet < afterLoud);
+  CHECK(afterQuiet > afterLoud - 20.0);
+
+  // 4. A-weighting must pull a 100 Hz tone down by about 19 dB relative to
+  //    unweighted, which is what a sound level meter does.
+  std::vector<double> low(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    low[i] = 0.1 * std::sin(2.0 * M_PI * 100.0 * i / fs);
+  }
+  RtaConfig zw = plain;
+  RtaAnalyzer e(zw);
+  e.push(low.data(), low.size());
+  RtaConfig aw = plain;
+  aw.weighting = SplWeighting::a;
+  RtaAnalyzer f(aw);
+  f.push(low.data(), low.size());
+  std::printf("  100 Hz level: Z %.1f dB, A %.1f dB\n", e.levelDbfs(),
+              f.levelDbfs());
+  CHECK_NEAR(e.levelDbfs() - f.levelDbfs(), 19.1, 1.5);
 }
 
 static void testCaptureQuality() {
@@ -1134,6 +1223,7 @@ int main() {
   testCaptureQuality();
   testRtaLevels();
   testRtaPinkWeightingAndPeakHold();
+  testRtaLikeRew();
   testPhaseUnwrap();
   testPhaseOfPureDelay();
   testTimeReferencedPhase();

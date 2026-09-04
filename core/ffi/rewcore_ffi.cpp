@@ -267,7 +267,23 @@ rew_rta* rew_rta_create(const rew_rta_config* cfg) {
     if (cfg->fs > 0.0) c.fs = cfg->fs;
     if (cfg->fftSize > 0) c.fftSize = cfg->fftSize;
     if (cfg->overlap > 0.0) c.overlap = cfg->overlap;
-    if (cfg->averaging > 0.0) c.averaging = cfg->averaging;
+    switch (cfg->averagingMode) {
+      case 0: c.averagingMode = RtaAveraging::none; break;
+      case 2: c.averagingMode = RtaAveraging::forever; break;
+      default: c.averagingMode = RtaAveraging::exponential; break;
+    }
+    if (cfg->averageCount > 0) c.averageCount = cfg->averageCount;
+    if (cfg->bandsPerOctave > 0.0) c.bandsPerOctave = cfg->bandsPerOctave;
+    c.octaveBands = cfg->octaveBands != 0;
+    switch (cfg->weighting) {
+      case 1: c.weighting = SplWeighting::a; break;
+      case 2: c.weighting = SplWeighting::c; break;
+      default: c.weighting = SplWeighting::z; break;
+    }
+    if (cfg->calFreqHz && cfg->calGainDb && cfg->calN > 0) {
+      c.calFreqHz.assign(cfg->calFreqHz, cfg->calFreqHz + cfg->calN);
+      c.calGainDb.assign(cfg->calGainDb, cfg->calGainDb + cfg->calN);
+    }
     if (cfg->smoothFrac < 0.0) {
       c.smoothFrac = 0.0;
     } else if (cfg->smoothFrac > 0.0) {

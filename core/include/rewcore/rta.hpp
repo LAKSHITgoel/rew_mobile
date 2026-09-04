@@ -22,6 +22,19 @@
 
 namespace rewcore {
 
+// How successive spectra are combined, in the terms REW uses rather than as an
+// opaque coefficient.
+enum class RtaAveraging {
+  none,         // show each block as it arrives
+  exponential,  // a running average that forgets, weighted 1/count
+  forever,      // a true cumulative mean over everything since the last reset
+};
+
+// Frequency weighting for the level readout. Z is unweighted; A follows the
+// ear's poor sensitivity to bass at low levels and is what noise regulations
+// quote; C is nearly flat but rolls off the extremes.
+enum class SplWeighting { z, a, c };
+
 struct RtaConfig {
   double fs = 48000.0;
 
@@ -35,10 +48,21 @@ struct RtaConfig {
   // cannot fall in a window's null and be missed.
   double overlap = 0.5;
 
-  // Exponential time averaging, 0..1, as the weight given to each NEW spectrum.
-  // 1.0 shows the latest block raw (fast, jumpy); small values are slow and
-  // steady. 0.2 is a reasonable default for looking at a car by hand.
-  double averaging = 0.2;
+  RtaAveraging averagingMode = RtaAveraging::exponential;
+
+  // Number of spectra in the running average, as REW offers it: 1, 2, 4, 8, 16
+  // and so on. Each new spectrum gets a weight of 1/count, so a larger number
+  // is slower and steadier. Ignored unless averagingMode is exponential.
+  int averageCount = 8;
+
+  // Draw as 1/N octave bands rather than raw FFT lines. This is the display an
+  // RTA is normally read in: bands sum the energy in each interval, which is
+  // closer to how the ear groups sound, and a band value does not jump around
+  // with the exact frequency of a tone the way a single FFT bin does.
+  bool octaveBands = false;
+  double bandsPerOctave = 24.0;  // 1, 2, 3, 6, 12, 24, 48
+
+  SplWeighting weighting = SplWeighting::z;
 
   // Fractional-octave smoothing of the displayed spectrum, as in the swept
   // measurement. 0 leaves the raw FFT lines.
@@ -53,6 +77,13 @@ struct RtaConfig {
   double fMin = 20.0;
   double fMax = 20000.0;
   std::size_t points = 0;  // 0 = keep the raw FFT grid
+
+  // Microphone calibration, as loaded from the UMIK-1's file. Applied to the
+  // spectrum, exactly as it is to a swept measurement — without it the display
+  // shows the microphone's own response as much as the car's, and the UMIK-1
+  // is several dB from flat at the extremes.
+  std::vector<double> calFreqHz;
+  std::vector<double> calGainDb;
 };
 
 class RtaAnalyzer {
@@ -76,8 +107,9 @@ class RtaAnalyzer {
   // note, or a dropout — which an averaged display hides by design.
   FreqResponse peakHold() const;
 
-  // Broadband level of the most recent block, dBFS. With a calibrated mic this
-  // becomes SPL by adding the offset.
+  // Broadband level of the most recent block, dBFS, with the configured
+  // weighting applied. With a calibrated mic this becomes SPL by adding the
+  // offset.
   double levelDbfs() const { return lastLevelDbfs_; }
 
   void resetAveraging();
@@ -94,10 +126,20 @@ class RtaAnalyzer {
   std::vector<double> freqHz_;    // bin centres
   std::vector<double> avgDb_;     // running average, dB
   std::vector<double> peakDb_;    // peak hold, dB
+  std::vector<double> calDb_;     // calibration resampled onto the bin grid
+  std::vector<double> weightDb_;  // A/C weighting per bin
   std::size_t hop_ = 0;
   double windowGainDb_ = 0.0;     // corrects for the window's amplitude loss
+  // Equivalent noise bandwidth of the window, in bins (1.5 for Hann). A single
+  // bin's amplitude is right after the coherent correction, but SUMMING power
+  // across bins then over-counts by exactly this factor, because each bin
+  // carries a share of its neighbours' energy.
+  double enbwBins_ = 1.0;
   bool haveSpectrum_ = false;
+  std::size_t averagedCount_ = 0;  // for the cumulative mean
   double lastLevelDbfs_ = -240.0;
+
+  FreqResponse toOctaveBands(const std::vector<double>& magDb) const;
 };
 
 }  // namespace rewcore

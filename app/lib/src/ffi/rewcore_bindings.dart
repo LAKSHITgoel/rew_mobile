@@ -169,17 +169,32 @@ final class RewRtaConfig extends ffi.Struct {
   @ffi.Double()
   external double overlap;
   @ffi.Double()
-  external double averaging;
-  @ffi.Double()
   external double smoothFrac;
   @ffi.Double()
   external double fMin;
   @ffi.Double()
   external double fMax;
+  @ffi.Double()
+  external double bandsPerOctave;
+
+  external ffi.Pointer<ffi.Double> calFreqHz;
+  external ffi.Pointer<ffi.Double> calGainDb;
+  @ffi.Size()
+  external int calN;
+
   @ffi.Size()
   external int fftSize;
   @ffi.Size()
   external int points;
+
+  @ffi.Int()
+  external int averagingMode;
+  @ffi.Int()
+  external int averageCount;
+  @ffi.Int()
+  external int octaveBands;
+  @ffi.Int()
+  external int weighting;
   @ffi.Int()
   external int pinkWeighted;
   @ffi.Int()

@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rew_mobile/src/audio/mock_audio_backend.dart';
 import 'package:rew_mobile/src/ffi/rewcore.dart';
+import 'package:rew_mobile/src/models/measurement.dart';
 import 'package:rew_mobile/src/wizard/rta_controller.dart';
 
 String? _findLib() {
@@ -74,10 +75,19 @@ void main() {
     addTearDown(c.dispose);
 
     await c.start();
-    await c.reconfigure(speed: RtaSpeed.fast, pinkWeighted: false);
+    await c.reconfigure(
+        averaging: RtaAveraging.forever,
+        averageCount: 16,
+        pinkWeighted: false,
+        octaveBands: true,
+        bandsPerOctave: 3,
+        weighting: SplWeighting.a);
     expect(c.running, isTrue);
-    expect(c.speed, RtaSpeed.fast);
+    expect(c.averaging, RtaAveraging.forever);
+    expect(c.averageCount, 16);
     expect(c.pinkWeighted, isFalse);
+    expect(c.bandsPerOctave, 3);
+    expect(c.weighting, SplWeighting.a);
     await c.stop();
   }, timeout: const Timeout(Duration(seconds: 30)));
 }

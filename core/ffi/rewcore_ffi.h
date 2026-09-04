@@ -218,13 +218,23 @@ REW_EXPORT size_t rew_crossover_result_size(void);
 // ---------------------------------------------------------------------------
 typedef struct rew_rta_config {
   double fs;
-  double overlap;      // 0 keeps the default
-  double averaging;    // 0 keeps the default
-  double smoothFrac;   // <0 means none; 0 keeps the default
+  double overlap;        // 0 keeps the default
+  double smoothFrac;     // <0 means none; 0 keeps the default
   double fMin;
   double fMax;
-  size_t fftSize;      // 0 keeps the default
-  size_t points;       // 0 keeps the raw FFT grid
+  double bandsPerOctave; // 0 keeps the default
+  // Optional microphone calibration, applied to the spectrum exactly as it is
+  // to a swept measurement. Without it the display shows the microphone's own
+  // response as much as the car's.
+  const double* calFreqHz;
+  const double* calGainDb;
+  size_t calN;
+  size_t fftSize;        // 0 keeps the default
+  size_t points;         // 0 keeps the raw FFT grid
+  int averagingMode;     // 0 none, 1 exponential, 2 forever
+  int averageCount;      // spectra in the running average (1, 2, 4, 8, ...)
+  int octaveBands;       // draw 1/N octave bands rather than FFT lines
+  int weighting;         // 0 Z, 1 A, 2 C — for the level readout
   int pinkWeighted;
   int reserved_;
 } rew_rta_config;

@@ -29,6 +29,35 @@ class FreqResponse {
       );
 }
 
+/// How successive spectra are combined, mirroring rewcore::RtaAveraging.
+enum RtaAveraging {
+  none(0, 'None', 'Every block as it arrives. Twitchy, but shows transients.'),
+  exponential(1, 'Exponential',
+      'A running average that forgets. The usual choice.'),
+  forever(2, 'Forever',
+      'Averages everything since you cleared it — for a settled picture of a '
+          'steady signal.');
+
+  const RtaAveraging(this.code, this.label, this.description);
+  final int code;
+  final String label;
+  final String description;
+}
+
+/// Level weighting, mirroring rewcore::SplWeighting.
+enum SplWeighting {
+  z(0, 'Z (unweighted)', 'The raw level, all frequencies counted equally.'),
+  a(1, 'A', 'Follows how little the ear makes of bass. What noise figures '
+      'are normally quoted in.'),
+  c(2, 'C', 'Nearly flat, rolling off only the extremes. Better for loud '
+      'sound and for bass.');
+
+  const SplWeighting(this.code, this.label, this.description);
+  final int code;
+  final String label;
+  final String description;
+}
+
 /// What a capture looked like before anything was inferred from it.
 class CaptureQuality {
   const CaptureQuality({

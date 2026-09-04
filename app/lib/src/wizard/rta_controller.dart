@@ -11,21 +11,14 @@ import 'package:flutter/foundation.dart';
 import '../audio/audio_backend.dart';
 import '../ffi/rewcore.dart';
 import '../models/measurement.dart';
+import '../models/mic_calibration.dart';
 
-/// How the spectrum is presented. These mirror what REW offers, and each
-/// answers a different question.
-enum RtaSpeed {
-  fast(0.6, 'Fast', 'Follows the sound closely. Use it while moving the mic '
-      'or hunting a rattle.'),
-  medium(0.25, 'Medium', 'A steadier picture. The usual choice.'),
-  slow(0.08, 'Slow', 'Heavily averaged, for judging overall balance against a '
-      'target rather than watching it move.');
+/// Number of spectra in the running average, offered the way REW offers it.
+const List<int> kRtaAverageCounts = [1, 2, 4, 8, 16, 32, 64];
 
-  const RtaSpeed(this.averaging, this.label, this.description);
-  final double averaging;
-  final String label;
-  final String description;
-}
+/// FFT lengths worth offering. Longer resolves closer modes but responds more
+/// slowly, because each block covers more time.
+const List<int> kRtaFftSizes = [4096, 8192, 16384, 32768, 65536];
 
 class RtaController extends ChangeNotifier {
   RtaController({required this.audio, required this.core});
@@ -46,7 +39,16 @@ class RtaController extends ChangeNotifier {
   bool showPeakHold = true;
   bool pinkWeighted = true;
   double smoothFrac = 6;
-  RtaSpeed speed = RtaSpeed.medium;
+  RtaAveraging averaging = RtaAveraging.exponential;
+  int averageCount = 8;
+  bool octaveBands = true;
+  double bandsPerOctave = 24;
+  SplWeighting weighting = SplWeighting.z;
+  int fftSize = 16384;
+
+  /// The UMIK-1's calibration, so the display shows the car rather than the
+  /// microphone. Set from the wizard when a file has been loaded.
+  MicCalibration? calibration;
 
   /// SPL offset from the wizard's calibration, when one has been done, so the
   /// readout is a real number rather than dBFS.
@@ -65,10 +67,15 @@ class RtaController extends ChangeNotifier {
     try {
       _session = core.openRta(
         fs: 48000,
-        fftSize: 16384,
-        averaging: speed.averaging,
+        fftSize: fftSize,
+        averaging: averaging,
+        averageCount: averageCount,
         smoothFrac: smoothFrac,
+        octaveBands: octaveBands,
+        bandsPerOctave: bandsPerOctave,
+        weighting: weighting,
         pinkWeighted: pinkWeighted,
+        calibration: calibration,
       );
       _sub = audio.inputLevels.listen(_onLevel, onError: (Object e) {
         error = '$e';
@@ -123,15 +130,25 @@ class RtaController extends ChangeNotifier {
   /// Changing any of these rebuilds the analyser, since fftSize, weighting and
   /// smoothing are fixed for its lifetime.
   Future<void> reconfigure({
-    RtaSpeed? speed,
+    RtaAveraging? averaging,
+    int? averageCount,
     bool? pinkWeighted,
     double? smoothFrac,
     bool? showPeakHold,
+    bool? octaveBands,
+    double? bandsPerOctave,
+    SplWeighting? weighting,
+    int? fftSize,
   }) async {
-    this.speed = speed ?? this.speed;
+    this.averaging = averaging ?? this.averaging;
+    this.averageCount = averageCount ?? this.averageCount;
     this.pinkWeighted = pinkWeighted ?? this.pinkWeighted;
     this.smoothFrac = smoothFrac ?? this.smoothFrac;
     this.showPeakHold = showPeakHold ?? this.showPeakHold;
+    this.octaveBands = octaveBands ?? this.octaveBands;
+    this.bandsPerOctave = bandsPerOctave ?? this.bandsPerOctave;
+    this.weighting = weighting ?? this.weighting;
+    this.fftSize = fftSize ?? this.fftSize;
 
     if (running) {
       await stop();
