@@ -416,7 +416,10 @@ class WizardController extends ChangeNotifier {
   /// Parse and apply a pasted/loaded UMIK-1 calibration file.
   /// Set by the app so a calibration loaded here is also available to the
   /// real-time analyser: it belongs to the microphone, not to one tune.
-  void Function(MicCalibration)? onCalibrationLoaded;
+  /// Given the file's own text as well as the parsed curve, so the app can
+  /// keep the original — it is what the user can check against the file the
+  /// microphone came with.
+  void Function(String rawText, MicCalibration cal)? onCalibrationLoaded;
 
   void loadCalibration(String text) {
     final cal = MicCalibration.parse(text);
@@ -424,7 +427,7 @@ class WizardController extends ChangeNotifier {
       status = 'Calibration file had no usable points.';
     } else {
       service.calibration = cal;
-      onCalibrationLoaded?.call(cal);
+      onCalibrationLoaded?.call(text, cal);
       calibrationSummary =
           '${cal.freqHz.length} points, ${cal.freqHz.first.toStringAsFixed(0)}–'
           '${cal.freqHz.last.toStringAsFixed(0)} Hz'
@@ -473,7 +476,18 @@ class WizardController extends ChangeNotifier {
   /// target. Stores both on the project under the 'system' key.
   Future<void> runEqMeasurement() async {
     await _run('Measuring system response…', () async {
-      final m = await service.measureAveraged(averagingPositions, band: band);
+      final m = await service.measureAveraged(
+        averagingPositions,
+        band: band,
+        onPhase: (phase, done, total) {
+          // Say which part is running. Several seconds of silence while the
+          // noise floor is captured looks like a hang otherwise.
+          status = total > 1 && phase == MeasurePhase.sweep
+              ? '${phase.title} (${done + 1} of $total) — ${phase.detail}'
+              : '${phase.title} — ${phase.detail}';
+          notifyListeners();
+        },
+      );
       final fr = m.response;
       final eq = await service.fitEqFor(m,
           maxBands: eqMaxBands,

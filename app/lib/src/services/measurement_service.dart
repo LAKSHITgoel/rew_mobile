@@ -16,6 +16,18 @@ import '../ffi/rewcore.dart';
 import '../models/measurement.dart';
 import '../models/mic_calibration.dart';
 
+/// Which part of a measurement is running, so the app can say what the silence
+/// or the sweep it is hearing actually means.
+enum MeasurePhase {
+  sweep('Playing the sweep', 'Keep the microphone still.'),
+  noiseFloor('Measuring the background noise',
+      'Nothing will play — stay quiet for a moment.');
+
+  const MeasurePhase(this.title, this.detail);
+  final String title;
+  final String detail;
+}
+
 /// Raised when a capture is not fit to be measured. Carries the assessment so
 /// the UI can say exactly what went wrong and what to change.
 class BadCaptureException implements Exception {
@@ -97,7 +109,8 @@ class MeasurementService {
   MeasurementService(this._core, this._audio,
       {this.config = const MeasurementConfig(),
       this.libraryPath,
-      Duration? captureTimeout})
+      Duration? captureTimeout,
+      this.calibration})
       : captureTimeout = captureTimeout ??
             Duration(seconds: (config.durationSec + 20).round());
 
@@ -122,6 +135,9 @@ class MeasurementService {
   final Duration captureTimeout;
 
   /// UMIK-1 calibration applied to every measurement (null = none loaded).
+  /// Supplied at construction from the app-level store, so a service built
+  /// anywhere — the wizard, the polarity check, a measurement asked for over
+  /// MCP — is calibrated without having to be told.
   MicCalibration? calibration;
 
   // Sweeps are cached per band; regenerating a 3 s sweep on every measurement of
@@ -286,18 +302,33 @@ class MeasurementService {
 
   /// Run [n] captures (e.g. around the listening position) and power-average them.
   Future<Measurement> measureAveraged(int n,
-      {SweepBand band = SweepBand.full, bool withNoiseFloor = true}) async {
-    // Once per set: the car's noise does not change between mic positions, and
-    // it costs a whole extra capture.
-    final noise = withNoiseFloor ? await measureNoiseFloor(band: band) : null;
+      {SweepBand band = SweepBand.full,
+      bool withNoiseFloor = true,
+      void Function(MeasurePhase phase, int done, int total)? onPhase}) async {
+    // Sweeps first, noise floor last.
+    //
+    // The noise floor is a full-length recording of silence, so measuring it
+    // first meant roughly eight seconds passed between pressing Measure and
+    // any sound at all — long enough to look broken, and long enough that
+    // people press the button again. The order does not matter to the result:
+    // the two captures are independent.
     final all = <FreqResponse>[];
     final allAnalysis = <FreqResponse>[];
     var levelSum = 0.0;
     for (var i = 0; i < n; i++) {
+      onPhase?.call(MeasurePhase.sweep, i, n);
       final m = await measureOnce(band: band);
       all.add(m.response);
       allAnalysis.add(m.analysisResponse);
       levelSum += m.levelDbfs;
+    }
+
+    // Once per set: the car's noise does not change between mic positions, and
+    // it costs a whole extra capture.
+    FreqResponse? noise;
+    if (withNoiseFloor) {
+      onPhase?.call(MeasurePhase.noiseFloor, n, n);
+      noise = await measureNoiseFloor(band: band);
     }
     // Keep how much the captures disagreed, not just their average: it is what
     // separates a property of the car from something that happened once.

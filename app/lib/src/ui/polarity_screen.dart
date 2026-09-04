@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/measurement.dart';
+import '../services/measurement_service.dart';
 import '../wizard/wizard_controller.dart';
 
 class PolarityScreen extends StatefulWidget {
@@ -40,6 +41,10 @@ class _PolarityScreenState extends State<PolarityScreen> {
   /// second capture over the first.
   String? _busyStep;
 
+  /// What the current capture is doing, so the screen does not claim a sweep is
+  /// playing while it is actually recording silence.
+  MeasurePhase _phase = MeasurePhase.sweep;
+
   /// Built once. `setup.channels` constructs a fresh list on every call, so a
   /// selection held from one call never matches an item from the next and the
   /// dropdown silently shows its hint instead of the choice you made.
@@ -54,7 +59,17 @@ class _PolarityScreenState extends State<PolarityScreen> {
       _busyStep = what;
     });
     try {
-      final m = await c.service.measureAveraged(1, band: SweepBand.full);
+      // No noise floor here: the polarity check compares levels between
+      // captures and never uses the signal-to-noise figure, so measuring it
+      // would double the wait for nothing.
+      final m = await c.service.measureAveraged(
+        1,
+        band: SweepBand.full,
+        withNoiseFloor: false,
+        onPhase: (phase, _, __) {
+          if (mounted) setState(() => _phase = phase);
+        },
+      );
       if (!mounted) return;
       setState(() {
         switch (what) {
@@ -95,7 +110,6 @@ class _PolarityScreenState extends State<PolarityScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final result = _result;
     return Scaffold(
       appBar: AppBar(title: const Text('Polarity & summation')),
       body: ListView(
@@ -119,6 +133,7 @@ class _PolarityScreenState extends State<PolarityScreen> {
               child: Text('Pick two different drivers.'),
             ),
           const Divider(height: 28),
+          if (_ready) _verdictCard(),
           if (!_ready)
             const Text('Choose the two drivers that share a crossover.')
           else ...[
@@ -159,45 +174,6 @@ class _PolarityScreenState extends State<PolarityScreen> {
               child: Text(_error!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error)),
             ),
-          if (result != null) ...[
-            const Divider(height: 28),
-            Card(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(result.advice.headline,
-                        style: Theme.of(context).textTheme.titleMedium),
-                    if (result.valid)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          '${result.strength} '
-                          '(${(result.confidence * 100).round()}%)',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    Text(result.explanation),
-                    if (result.valid) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        'Measured through the overlap: '
-                        '${result.measuredDb.toStringAsFixed(1)} dB. '
-                        'A perfect sum would be '
-                        '${result.coherentDb.toStringAsFixed(1)} dB; two '
-                        'drivers arriving unrelated would give '
-                        '${result.powerDb.toStringAsFixed(1)} dB.',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
           const SizedBox(height: 16),
           const Text(
             'A note on what this cannot tell you: it says whether the pair '
@@ -208,6 +184,102 @@ class _PolarityScreenState extends State<PolarityScreen> {
             style: TextStyle(fontSize: 12),
           ),
         ],
+      ),
+    );
+  }
+
+  /// The answer, or what is still needed to get one. Put above the steps and
+  /// colour-coded: "is the polarity right" is the whole reason for this screen,
+  /// and it should not be something you have to scroll for and interpret.
+  Widget _verdictCard() {
+    final r = _result;
+    final scheme = Theme.of(context).colorScheme;
+
+    if (r == null) {
+      final done = [_aOnly, _bOnly, _both].where((x) => x != null).length;
+      return Card(
+        margin: const EdgeInsets.only(bottom: 16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('No answer yet — $done of 3 measurements done',
+                  style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              const Text(
+                'Steps 1 to 3 are enough for a verdict. Step 4 is optional and '
+                'makes it more certain.',
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final (Color bg, Color fg, IconData icon) = switch (r.advice) {
+      PolarityAdvice.keep => (
+          const Color(0xFF1B3D23),
+          const Color(0xFF9BE7A8),
+          Icons.check_circle
+        ),
+      PolarityAdvice.invert => (
+          const Color(0xFF4A2E12),
+          const Color(0xFFFFB74D),
+          Icons.swap_vert_circle
+        ),
+      PolarityAdvice.suspectDestructive => (
+          const Color(0xFF4A2E12),
+          const Color(0xFFFFB74D),
+          Icons.warning_amber
+        ),
+      _ => (scheme.surfaceContainerHighest, scheme.onSurface, Icons.help_outline),
+    };
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      color: bg,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, color: fg),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  r.advice.headline,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(color: fg, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ]),
+            if (r.valid)
+              Padding(
+                padding: const EdgeInsets.only(top: 2, left: 32),
+                child: Text(
+                  '${r.strength} (${(r.confidence * 100).round()}%)'
+                  '${r.haveInverted ? '' : ' — step 4 would settle it'}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            const SizedBox(height: 10),
+            Text(r.explanation),
+            if (r.valid) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Through the overlap the pair measured '
+                '${r.measuredDb.toStringAsFixed(1)} dB. Summing perfectly it '
+                'would be ${r.coherentDb.toStringAsFixed(1)} dB; arriving '
+                'unrelated, ${r.powerDb.toStringAsFixed(1)} dB.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -263,8 +335,7 @@ class _PolarityScreenState extends State<PolarityScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 Text(
                   measuringThis
-                      ? 'Playing the sweep and recording — keep the '
-                          'microphone still.'
+                      ? '${_phase.title} — ${_phase.detail}'
                       : detail,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),

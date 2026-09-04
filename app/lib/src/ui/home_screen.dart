@@ -10,6 +10,7 @@ import '../models/tuning_parameters.dart';
 import '../services/measurement_service.dart';
 import '../wizard/rta_controller.dart';
 import 'mcp_screen.dart';
+import 'microphone_screen.dart';
 import 'parameters_screen.dart';
 import 'rta_screen.dart';
 import '../wizard/wizard_controller.dart';
@@ -81,11 +82,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openWizard(TuneProject project) async {
     final controller = WizardController(
-      service: MeasurementService(widget.services.core, widget.services.audio),
+      service: MeasurementService(
+        widget.services.core,
+        widget.services.audio,
+        calibration: widget.services.calibration,
+      ),
       store: widget.services.store,
       project: project,
       journal: widget.services.journal,
-    )..onCalibrationLoaded = (cal) => widget.services.calibration = cal;
+    )..onCalibrationLoaded = (rawText, cal) async {
+        // Loading it inside a tune now keeps it for the whole app, and for
+        // every session after this one.
+        widget.services.calibration = cal;
+        widget.services.calibrationName = 'loaded in ${project.name}';
+        await widget.services.calibrationStore
+            .save(widget.services.calibrationName!, rawText);
+      };
     await controller.loadParameters();
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -132,6 +144,20 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Car Audio Tuner'),
         actions: [
+          IconButton(
+            tooltip: 'Microphone',
+            icon: Icon(widget.services.calibration == null
+                ? Icons.mic_none
+                : Icons.mic),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => MicrophoneScreen(services: widget.services),
+                ),
+              );
+              if (mounted) setState(() {});
+            },
+          ),
           IconButton(
             tooltip: 'Real-time analyser',
             icon: const Icon(Icons.graphic_eq),
@@ -220,7 +246,10 @@ class _AppMcpContext implements McpContext {
 
   @override
   Future<Measurement> measure({String? tuneId, int positions = 3}) async {
-    final service = MeasurementService(services.core, services.audio);
+    // Calibrated like every other measurement: a curve handed to an assistant
+    // for review must not be the microphone's response rather than the car's.
+    final service = MeasurementService(services.core, services.audio,
+        calibration: services.calibration);
     return service.measureAveraged(positions);
   }
 

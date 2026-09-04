@@ -9,6 +9,7 @@ import 'src/audio/mock_audio_backend.dart';
 import 'src/audio/native_audio_backend.dart';
 import 'src/ffi/rewcore.dart';
 import 'src/platform/file_picker.dart';
+import 'src/services/calibration_store.dart';
 import 'src/services/journal_store.dart';
 import 'src/services/project_store.dart';
 import 'src/ui/home_screen.dart';
@@ -107,8 +108,27 @@ class _BootstrapState extends State<_Bootstrap> {
     final JournalStore journal =
         dir == null ? MemoryJournalStore() : FileJournalStore(Directory(dir));
 
-    return AppServices(
-        core: Rewcore.open(), audio: audio, store: store, journal: journal);
+    final CalibrationStore calibrationStore = dir == null
+        ? MemoryCalibrationStore()
+        : FileCalibrationStore(Directory(dir));
+
+    final services = AppServices(
+      core: Rewcore.open(),
+      audio: audio,
+      store: store,
+      journal: journal,
+      calibrationStore: calibrationStore,
+    );
+
+    // Load it once, at startup, so every measurement the app makes is
+    // calibrated — not only the ones taken after someone remembered to load a
+    // file inside a tune.
+    final stored = await calibrationStore.load();
+    if (stored != null) {
+      services.calibration = stored.calibration;
+      services.calibrationName = stored.name;
+    }
+    return services;
   }
 
   @override

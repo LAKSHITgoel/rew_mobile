@@ -452,6 +452,50 @@ void main() {
     expect(boost.beginnerLine(), contains('bass'));
     expect(boost.beginnerLine(), contains('Lift it by 3.0 dB'));
   });
+
+  test('the sweep plays before the noise floor is captured', () async {
+    // A noise floor is a full-length recording of silence. Measuring it first
+    // put about eight seconds between pressing Measure and any sound, which
+    // reads as a hang — people press the button again.
+    final order = <String>[];
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      _OrderRecordingBackend(order),
+      libraryPath: lib,
+    );
+    await svc.measureAveraged(2, band: SweepBand.full);
+
+    // Two sweeps, then one silent capture.
+    expect(order, ['sweep', 'sweep', 'silence']);
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('the phase is reported so the app can say what it is doing', () async {
+    final phases = <String>[];
+    await service.measureAveraged(
+      2,
+      band: SweepBand.full,
+      onPhase: (p, done, total) => phases.add('${p.name}:$done/$total'),
+    );
+    expect(phases, ['sweep:0/2', 'sweep:1/2', 'noiseFloor:2/2']);
+    // Each phase says what is happening and what to do about it.
+    for (final p in MeasurePhase.values) {
+      expect(p.title, isNotEmpty);
+      expect(p.detail, isNotEmpty);
+    }
+  }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('skipping the noise floor really skips the capture', () async {
+    final order = <String>[];
+    final svc = MeasurementService(
+      Rewcore.open(libraryPath: lib),
+      _OrderRecordingBackend(order),
+      libraryPath: lib,
+    );
+    final m = await svc.measureAveraged(1,
+        band: SweepBand.full, withNoiseFloor: false);
+    expect(order, ['sweep']);
+    expect(m.noiseFloor, isNull);
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
 /// A backend whose capture never completes, like a mic that was unplugged.
@@ -494,5 +538,26 @@ class _SilentBackend extends MockAudioBackend {
   Future<Float64List> playSweepAndCapture(
           {required Float64List sweep, required double fs}) async =>
       Float64List(sweep.length);
+}
+
+/// Notes whether each capture played a real sweep or silence, so the order can
+/// be checked.
+class _OrderRecordingBackend extends MockAudioBackend {
+  _OrderRecordingBackend(this.order);
+  final List<String> order;
+
+  @override
+  Future<Float64List> playSweepAndCapture(
+      {required Float64List sweep, required double fs}) {
+    var silent = true;
+    for (final v in sweep) {
+      if (v != 0) {
+        silent = false;
+        break;
+      }
+    }
+    order.add(silent ? 'silence' : 'sweep');
+    return super.playSweepAndCapture(sweep: sweep, fs: fs);
+  }
 }
 
