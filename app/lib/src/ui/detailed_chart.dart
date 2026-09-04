@@ -118,6 +118,62 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
   /// Traces hidden by tapping their legend entry.
   final Set<String> _hidden = {};
 
+  /// Label the largest peaks and dips. Finding the worst offender by eye means
+  /// scanning a jagged curve and guessing; the numbers are already there, so
+  /// the chart may as well point at them.
+  bool _markers = false;
+
+  /// The biggest departures from the local trend in the first visible trace.
+  /// Deliberately measured against a smoothed version of the curve rather than
+  /// against a flat line: on a response that tilts, every point at one end
+  /// would otherwise count as a peak.
+  List<({double hz, double db, bool isPeak})> _extremes() {
+    if (!_markers) return const [];
+    final visible = _visible;
+    if (visible.isEmpty) return const [];
+    final fr = visible.first.response;
+    if (fr.length < 12) return const [];
+
+    // Local trend: a wide moving average in log space.
+    final trend = List<double>.filled(fr.length, 0);
+    const half = 12;
+    for (var i = 0; i < fr.length; i++) {
+      var sum = 0.0;
+      var n = 0;
+      for (var j = i - half; j <= i + half; j++) {
+        if (j < 0 || j >= fr.length) continue;
+        sum += fr.magDb[j];
+        n++;
+      }
+      trend[i] = sum / n;
+    }
+
+    final out = <({double hz, double db, bool isPeak})>[];
+    for (var i = 2; i < fr.length - 2; i++) {
+      final f = fr.freqHz[i];
+      if (f < fLo || f > fHi) continue;
+      final dev = fr.magDb[i] - trend[i];
+      if (dev.abs() < 3) continue;
+      final isPeak = dev > 0;
+      // Only genuine turning points, or a broad hump would be labelled at
+      // every one of its points.
+      final a = fr.magDb[i - 1], b = fr.magDb[i], c = fr.magDb[i + 1];
+      if (isPeak && !(b >= a && b >= c)) continue;
+      if (!isPeak && !(b <= a && b <= c)) continue;
+      out.add((hz: f, db: fr.magDb[i], isPeak: isPeak));
+    }
+
+    // Keep the biggest few, spaced apart, so the chart does not fill with text.
+    out.sort((x, y) => (y.db.abs()).compareTo(x.db.abs()));
+    final kept = <({double hz, double db, bool isPeak})>[];
+    for (final e in out) {
+      if (kept.length >= 6) break;
+      if (kept.any((k) => (math.log(k.hz / e.hz)).abs() < 0.35)) continue;
+      kept.add(e);
+    }
+    return kept;
+  }
+
   // Live gesture state; the window is recomputed from the values at gesture
   // start so a pinch does not compound with itself frame to frame.
   double _fLo0 = 0, _fHi0 = 0, _dbLo0 = 0, _dbHi0 = 0;
@@ -255,6 +311,62 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
         _cursorHz = null;
       });
 
+  /// Type the range in. The presets cover the regions worth naming; this is
+  /// for the times you want exactly 45 to 65 Hz because that is where the mode
+  /// is, and no preset is going to guess that.
+  Future<void> _askRange() async {
+    final lo = TextEditingController(text: fLo.round().toString());
+    final hi = TextEditingController(text: fHi.round().toString());
+    final result = await showDialog<({double lo, double hi})>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Frequency range'),
+        content: Row(children: [
+          Expanded(
+            child: TextField(
+              controller: lo,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'From (Hz)'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: hi,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'To (Hz)'),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              final a = double.tryParse(lo.text);
+              final b = double.tryParse(hi.text);
+              if (a == null || b == null || a <= 0 || b <= a) {
+                Navigator.pop(ctx);
+                return;
+              }
+              Navigator.pop(ctx, (lo: a, hi: b));
+            },
+            child: const Text('Show'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      // Clamped to what was measured: a range outside it would draw an empty
+      // chart and look like a broken measurement.
+      _fLo = result.lo.clamp(widget.fMin, widget.fMax);
+      _fHi = result.hi.clamp(widget.fMin, widget.fMax);
+      final hz = _cursorHz;
+      if (hz != null && (hz < _fLo! || hz > _fHi!)) _cursorHz = null;
+    });
+  }
+
   Widget _chip(
       {required String label,
       required bool selected,
@@ -359,12 +471,24 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
             scrollDirection: Axis.horizontal,
             child: Row(children: [
               _chip(
+                label: 'Peaks',
+                selected: _markers,
+                onTap: () => setState(() => _markers = !_markers),
+              ),
+              const SizedBox(width: 6),
+              _chip(
                 label: 'Cursor',
                 selected: _cursorMode,
                 onTap: () => setState(() {
                   _cursorMode = !_cursorMode;
                   if (!_cursorMode) _cursorHz = null;
                 }),
+              ),
+              const SizedBox(width: 10),
+              _chip(
+                label: 'Range…',
+                selected: false,
+                onTap: _askRange,
               ),
               const SizedBox(width: 10),
               for (final r in ChartRange.all) ...[
@@ -406,6 +530,7 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
                     phaseMin: widget.phaseMin,
                     phaseMax: widget.phaseMax,
                     cursorHz: _cursorHz,
+                    markers: _extremes(),
                   ),
                   size: Size.infinite,
                 ),
@@ -485,9 +610,11 @@ class _DetailedPainter extends CustomPainter {
     required this.phaseMin,
     required this.phaseMax,
     this.cursorHz,
+    this.markers = const [],
   });
 
   final double? cursorHz;
+  final List<({double hz, double db, bool isPeak})> markers;
 
   final List<DetailedTrace> traces;
   final double fMin, fMax, dbMin, dbMax, phaseMin, phaseMax;
@@ -652,6 +779,20 @@ class _DetailedPainter extends CustomPainter {
         );
       }
     }
+    for (final m in markers) {
+      if (m.hz < fMin || m.hz > fMax) continue;
+      if (m.db < dbMin || m.db > dbMax) continue;
+      final x = _x(m.hz, size);
+      final y = _yDb(m.db, size);
+      final color = m.isPeak ? const Color(0xFFFF8A65) : const Color(0xFF64B5F6);
+      canvas.drawCircle(Offset(x, y), 3, Paint()..color = color);
+      final label = m.hz >= 1000
+          ? '${(m.hz / 1000).toStringAsFixed(1)}k'
+          : '${m.hz.round()}';
+      // Peaks labelled above, dips below, so the text never sits on the curve.
+      _text(canvas, label, Offset(x - 12, m.isPeak ? y - 16 : y + 5), 10, color);
+    }
+
     canvas.restore();
     canvas.drawRect(plot, Paint()
       ..color = Colors.white24

@@ -295,6 +295,7 @@ class _WizardScreenState extends State<WizardScreen> {
     final ch = c.measuringChannel;
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => MeasurementDetailScreen(
+        store: c.store,
         title: '${c.project.name} — ${ch.name}',
         subtitle: '${c.band.label} · '
             '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
@@ -364,6 +365,7 @@ class _WizardScreenState extends State<WizardScreen> {
             '${usable.fHi >= 1000 ? '${(usable.fHi / 1000).toStringAsFixed(1)} kHz' : '${usable.fHi.round()} Hz'}';
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => MeasurementDetailScreen(
+        store: c.store,
         title: '${c.project.name} — ${c.band.label}',
         subtitle: '1/${c.service.config.smoothFrac.toStringAsFixed(0)} octave '
             'smoothing · ${measured.length} points · $cal · level $lvl$reach · '

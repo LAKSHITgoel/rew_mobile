@@ -11,7 +11,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
+import '../models/measurement.dart';
+import '../models/project.dart';
 import '../platform/file_picker.dart';
+import '../services/project_store.dart';
 import 'detailed_chart.dart';
 
 class MeasurementDetailScreen extends StatefulWidget {
@@ -20,20 +23,139 @@ class MeasurementDetailScreen extends StatefulWidget {
     required this.title,
     required this.subtitle,
     required this.traces,
+    this.store,
   });
 
   final String title;
   final String subtitle;
   final List<DetailedTrace> traces;
 
+  /// Supplied so other saved measurements can be pulled in as references.
+  /// Comparing today against last month is a core tuning move — did the change
+  /// help, and where — and it was impossible: every measurement lived alone in
+  /// its own tune.
+  final ProjectStore? store;
+
   @override
   State<MeasurementDetailScreen> createState() =>
       _MeasurementDetailScreenState();
 }
 
+/// One measurement borrowed from another tune, and how far it has been shifted
+/// to line up with the one being looked at.
+class _Reference {
+  _Reference(this.tuneName, this.channel, this.response, this.color);
+  final String tuneName;
+  final String channel;
+  final FreqResponse response;
+  final Color color;
+  double offsetDb = 0;
+
+  String get label => channel == 'system'
+      ? tuneName
+      : '$tuneName · $channel';
+
+  DetailedTrace trace() => DetailedTrace(
+        offsetDb == 0
+            ? response
+            : FreqResponse(
+                response.freqHz,
+                [for (final v in response.magDb) v + offsetDb],
+              ),
+        color,
+        offsetDb == 0
+            ? label
+            : '$label (${offsetDb > 0 ? '+' : ''}${offsetDb.toStringAsFixed(1)} dB)',
+      );
+}
+
+/// Enough colours to tell several references apart, chosen to stay distinct
+/// from the measured blue, the noise-floor brown and the target green.
+const _refColors = <Color>[
+  Color(0xFFE57373),
+  Color(0xFFBA68C8),
+  Color(0xFF4DB6AC),
+  Color(0xFFFFD54F),
+  Color(0xFF90A4AE),
+];
+
 class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
   final GlobalKey _boundary = GlobalKey();
   bool _busy = false;
+
+  /// References pulled in from other tunes, with the level shift applied to
+  /// each. Two measurements taken at different volumes have the same shape at
+  /// different heights, and comparing shape is the whole point — so the offset
+  /// is adjustable rather than the curves being force-aligned, which would hide
+  /// a real level difference when that is what you were checking.
+  final List<_Reference> _refs = [];
+
+  List<DetailedTrace> get _allTraces => [
+        ...widget.traces,
+        for (final r in _refs) r.trace(),
+      ];
+
+  /// Offer every measurement in every saved tune, so a reference can be picked
+  /// without leaving the graph.
+  Future<void> _addReference() async {
+    final store = widget.store;
+    if (store == null) return;
+    final tunes = await store.list();
+    if (!mounted) return;
+
+    final options = <({TuneProject tune, String channel})>[];
+    for (final t in tunes) {
+      for (final ch in t.measured.keys) {
+        options.add((tune: t, channel: ch));
+      }
+    }
+    if (options.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No other measurements have been saved yet.')));
+      return;
+    }
+
+    final picked = await showModalBottomSheet<({TuneProject tune, String channel})>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Add a measurement to compare against — an earlier session, '
+                'another channel, or the same car before a change.',
+              ),
+            ),
+            for (final o in options)
+              ListTile(
+                title: Text(o.channel == 'system'
+                    ? o.tune.name
+                    : '${o.tune.name} · ${o.channel}'),
+                subtitle: Text(
+                    '${o.tune.createdAt.toIso8601String().split('T').first}'
+                    '${o.tune.levelsDbfs[o.channel] != null ? '  ·  level '
+                        '${o.tune.levelsDbfs[o.channel]!.toStringAsFixed(1)} dBFS' : ''}'),
+                onTap: () => Navigator.pop(ctx, o),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+
+    final fr = picked.tune.measured[picked.channel];
+    if (fr == null) return;
+    setState(() {
+      _refs.add(_Reference(
+        picked.tune.name,
+        picked.channel,
+        fr,
+        _refColors[_refs.length % _refColors.length],
+      ));
+    });
+  }
 
   String get _stamp => DateTime.now()
       .toIso8601String()
@@ -205,11 +327,58 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
           RepaintBoundary(
             key: _boundary,
             child: DetailedFrChart(
-              traces: widget.traces,
+              traces: _allTraces,
               title: widget.title,
               subtitle: widget.subtitle,
             ),
           ),
+          if (widget.store != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _addReference,
+                icon: const Icon(Icons.add_chart, size: 18),
+                label: const Text('Compare with another measurement'),
+              ),
+            ),
+          ],
+          for (final r in _refs)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(children: [
+                Container(width: 14, height: 3, color: r.color),
+                const SizedBox(width: 8),
+                Expanded(child: Text(r.label, style: const TextStyle(fontSize: 13))),
+                // Level shift, not auto-alignment: two measurements taken at
+                // different volumes have the same shape at different heights,
+                // and forcing them together would hide a level difference when
+                // that is exactly what you were checking.
+                IconButton(
+                  tooltip: 'Down 1 dB',
+                  icon: const Icon(Icons.remove, size: 18),
+                  onPressed: () => setState(() => r.offsetDb -= 1),
+                ),
+                SizedBox(
+                  width: 52,
+                  child: Text(
+                    '${r.offsetDb > 0 ? '+' : ''}${r.offsetDb.toStringAsFixed(0)} dB',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Up 1 dB',
+                  icon: const Icon(Icons.add, size: 18),
+                  onPressed: () => setState(() => r.offsetDb += 1),
+                ),
+                IconButton(
+                  tooltip: 'Remove',
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => setState(() => _refs.remove(r)),
+                ),
+              ]),
+            ),
           const Padding(
             padding: EdgeInsets.only(top: 6),
             child: Text(
