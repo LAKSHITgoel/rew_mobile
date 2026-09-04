@@ -78,11 +78,17 @@ flutter run --dart-define=USE_MOCK_AUDIO=true   # no mic/car needed
   `cmake -S packages/rewcore_ffi/src -B build-ffi && cmake --build build-ffi -j`.
 - **Android is verified on a device:** debug and release builds install and run on
   a phone; a measurement plays a real sweep and captures the mic end to end.
-- **Nothing iOS has been compiled.** The Swift audio/files plugins are written and
-  registered in the Xcode project (both appear in the Runner target's Sources
-  phase, and the project still parses), but this machine has only the Command
-  Line Tools — no Xcode, no CocoaPods — so none of it has seen a compiler. Treat
-  every iOS claim as unverified until `flutter build ios` runs.
+- **iOS now compiles, with the DSP in it.** `flutter build ios --release` runs
+  clean and `Runner.app/Frameworks/rewcore_ffi.framework` exports all 32 `rew_*`
+  functions, so the Dart side's `DynamicLibrary.process()` will find them. The
+  toolchain needs `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`
+  (`xcode-select` points at the Command Line Tools). **After adding any file to
+  `core/`, re-run `pod install` in `app/ios`** — the podspec globs
+  `Classes/*.cpp`, but the generated Pods project is a snapshot of the file list
+  at the time it ran, so new sources link as undefined symbols until it does.
+  Still unverified on iOS: nothing has been *run* on an iPhone — no measurement,
+  no microphone, no Spike #0.
+
 - **Recommendations explain themselves.** Every EQ band and crossover edge
   carries a reason code and a confidence score, and features the fitter refuses
   to touch come back as advice rather than being omitted. Confidence is a

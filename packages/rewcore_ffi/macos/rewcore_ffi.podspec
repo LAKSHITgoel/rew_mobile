@@ -12,7 +12,11 @@ Pod::Spec.new do |s|
   s.summary          = 'rewcore C++ measurement DSP as an FFI plugin.'
   s.description      = 'Compiles the shared rewcore core for iOS/macOS.'
   s.homepage         = 'https://example.com'
-  s.license          = { :file => '../LICENSE' }
+  # Marked private rather than pointing at a LICENSE file: there is no LICENSE
+  # in this repo, and naming one that does not exist makes `pod install` warn on
+  # every run. This says only that the pod is not published — it makes no claim
+  # about the terms the code is under, which is the repo owner's call.
+  s.license          = { :type => 'Private' }
   s.author           = { 'rew_mobile' => 'noreply@example.com' }
   s.source           = { :path => '.' }
 
