@@ -9,6 +9,7 @@ import 'src/audio/mock_audio_backend.dart';
 import 'src/audio/native_audio_backend.dart';
 import 'src/ffi/rewcore.dart';
 import 'src/platform/file_picker.dart';
+import 'src/mcp/mcp_server.dart';
 import 'src/services/calibration_store.dart';
 import 'src/services/journal_store.dart';
 import 'src/services/project_store.dart';
@@ -112,12 +113,17 @@ class _BootstrapState extends State<_Bootstrap> {
         ? MemoryCalibrationStore()
         : FileCalibrationStore(Directory(dir));
 
+    final McpTokenStore mcpTokenStore = dir == null
+        ? MemoryMcpTokenStore()
+        : FileMcpTokenStore(Directory(dir));
+
     final services = AppServices(
       core: Rewcore.open(),
       audio: audio,
       store: store,
       journal: journal,
       calibrationStore: calibrationStore,
+      mcpTokenStore: mcpTokenStore,
     );
 
     // Load it once, at startup, so every measurement the app makes is

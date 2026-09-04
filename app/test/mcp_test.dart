@@ -279,13 +279,42 @@ void main() {
           HttpStatus.unauthorized);
     });
 
-    test('a new token is issued each time it is switched on', () async {
+    test('the token survives the server being switched off and on', () async {
+      // It has to: a token that changes on every toggle must be re-pasted into
+      // the assistant's configuration each time, and people respond to that by
+      // leaving the server on permanently.
       final first = server.token;
       await server.stop();
-      expect(server.running, isFalse);
       expect(server.token, isNull);
       await server.start();
-      expect(server.token, isNot(first));
+      expect(server.token, first);
+    });
+
+    test('a regenerated token works and the old one stops', () async {
+      final old = server.token!;
+      await server.regenerateToken();
+      final fresh = server.token!;
+      expect(fresh, isNot(old));
+
+      expect((await post(jsonEncode(_req(1, 'initialize')), token: old))
+          .statusCode, HttpStatus.unauthorized);
+      expect((await post(jsonEncode(_req(1, 'initialize')), token: fresh))
+          .statusCode, HttpStatus.ok);
+    });
+
+    test('a stored token is reused by a new server on the same store',
+        () async {
+      // What a relaunch of the app does.
+      final store = MemoryMcpTokenStore();
+      final a = McpServer(tools: buildTools(ctx), tokenStore: store, port: 8793);
+      await a.start();
+      final issued = a.token;
+      await a.stop();
+
+      final b = McpServer(tools: buildTools(ctx), tokenStore: store, port: 8793);
+      await b.start();
+      expect(b.token, issued);
+      await b.stop();
     });
   });
 }

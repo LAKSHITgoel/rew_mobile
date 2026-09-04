@@ -74,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openMcp() async {
     _mcp ??= McpServer(
       tools: buildTools(_AppMcpContext(widget.services, () => _rta)),
+      tokenStore: widget.services.mcpTokenStore,
     );
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => McpScreen(server: _mcp!)),

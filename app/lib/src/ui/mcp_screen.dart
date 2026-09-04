@@ -2,7 +2,7 @@
 //
 // This opens a port on the local network and one of its tools plays sound
 // through the car, so the screen says so plainly rather than burying it. Off
-// unless switched on, and the token changes every time it is.
+// unless switched on, and its token is revocable from that screen.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -87,6 +87,11 @@ class McpScreen extends StatelessWidget {
                     icon: const Icon(Icons.key, size: 18),
                     label: const Text('Copy token'),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: () => _regenerate(context),
+                    icon: const Icon(Icons.autorenew, size: 18),
+                    label: const Text('New token'),
+                  ),
                 ]),
                 const SizedBox(height: 16),
                 Text('In your assistant',
@@ -105,7 +110,9 @@ class McpScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 const Text(
                   'The phone and the computer must be on the same network. The '
-                  'token changes every time you switch this off and on.',
+                  'token stays the same across restarts, so it only has to be '
+                  'set up once — use "New token" to revoke it, which stops '
+                  'anything still holding the old one.',
                 ),
               ],
               if (server.running && url == null)
@@ -122,6 +129,35 @@ class McpScreen extends StatelessWidget {
   }
 
   static const _tokenPlaceholder = '<token>';
+
+  /// Revoking is a deliberate act with a consequence — whatever is configured
+  /// elsewhere stops working — so it asks first.
+  Future<void> _regenerate(BuildContext context) async {
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Issue a new token?'),
+            content: const Text(
+                'The current token stops working at once. Anything already set '
+                'up with it — an assistant on your computer, for instance — '
+                'will need the new one pasted in.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Keep the current one')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Issue a new token')),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok || !context.mounted) return;
+    await server.regenerateToken();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('New token issued. The old one no longer works.')));
+  }
 
   void _copy(BuildContext context, String value, String message) {
     Clipboard.setData(ClipboardData(text: value));

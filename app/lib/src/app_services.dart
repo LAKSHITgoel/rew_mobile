@@ -2,6 +2,7 @@
 import 'audio/audio_backend.dart';
 import 'ffi/rewcore.dart';
 import 'models/mic_calibration.dart';
+import 'mcp/mcp_server.dart';
 import 'services/calibration_store.dart';
 import 'services/journal_store.dart';
 import 'services/project_store.dart';
@@ -13,6 +14,7 @@ class AppServices {
     required this.store,
     required this.journal,
     required this.calibrationStore,
+    required this.mcpTokenStore,
   });
 
   final Rewcore core;
@@ -24,6 +26,11 @@ class AppServices {
   final JournalStore journal;
 
   final CalibrationStore calibrationStore;
+
+  /// Kept across launches so the token pasted into an assistant's
+  /// configuration keeps working, and is revoked deliberately rather than by
+  /// accident.
+  final McpTokenStore mcpTokenStore;
 
   /// The UMIK-1 calibration, once loaded. Held here rather than inside one tune
   /// because it belongs to the microphone, not to a car — every part of the app

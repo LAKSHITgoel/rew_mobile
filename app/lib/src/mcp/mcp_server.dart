@@ -14,10 +14,63 @@ import 'package:flutter/foundation.dart';
 import 'mcp_protocol.dart';
 import 'mcp_tools.dart';
 
+/// Where the server's token lives.
+///
+/// It is kept rather than regenerated each time the server starts, because a
+/// token that changes on every toggle has to be re-pasted into the assistant's
+/// configuration every time — which in practice means people stop turning the
+/// server off. A stable token that can be revoked deliberately is the safer
+/// arrangement, and the port is still closed unless the server is running: the
+/// token alone opens nothing.
+abstract class McpTokenStore {
+  /// The current token, creating and saving one on first use.
+  Future<String> token();
+
+  /// Throw the old one away and issue a new one. Anything holding the old
+  /// token stops working, which is the point.
+  Future<String> regenerate();
+}
+
+class FileMcpTokenStore implements McpTokenStore {
+  FileMcpTokenStore(this.dir);
+  final Directory dir;
+
+  File get _file => File('${dir.path}/mcp_token.txt');
+
+  @override
+  Future<String> token() async {
+    if (_file.existsSync()) {
+      final held = (await _file.readAsString()).trim();
+      if (held.isNotEmpty) return held;
+    }
+    return regenerate();
+  }
+
+  @override
+  Future<String> regenerate() async {
+    if (!dir.existsSync()) await dir.create(recursive: true);
+    final fresh = McpServer.makeToken();
+    await _file.writeAsString(fresh, flush: true);
+    return fresh;
+  }
+}
+
+class MemoryMcpTokenStore implements McpTokenStore {
+  String? _held;
+
+  @override
+  Future<String> token() async => _held ??= McpServer.makeToken();
+
+  @override
+  Future<String> regenerate() async => _held = McpServer.makeToken();
+}
+
 class McpServer extends ChangeNotifier {
-  McpServer({required this.tools, this.port = 8787});
+  McpServer({required this.tools, McpTokenStore? tokenStore, this.port = 8787})
+      : tokenStore = tokenStore ?? MemoryMcpTokenStore();
 
   final List<McpTool> tools;
+  final McpTokenStore tokenStore;
   final int port;
 
   HttpServer? _server;
@@ -35,9 +88,7 @@ class McpServer extends ChangeNotifier {
     if (running) return;
     error = null;
     try {
-      // A fresh token each time it is switched on: a token that outlives the
-      // session it was shown in is a password nobody remembers sharing.
-      _token = _makeToken();
+      _token = await tokenStore.token();
       _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
       _address = await _localAddress();
       unawaited(_serve(_server!));
@@ -46,6 +97,14 @@ class McpServer extends ChangeNotifier {
       _server = null;
       _token = null;
     }
+    notifyListeners();
+  }
+
+  /// Issue a new token, revoking the old one. Takes effect at once — every
+  /// request is checked against the current token, so nothing needs restarting.
+  Future<void> regenerateToken() async {
+    final fresh = await tokenStore.regenerate();
+    if (running) _token = fresh;
     notifyListeners();
   }
 
@@ -148,7 +207,7 @@ class McpServer extends ChangeNotifier {
     res.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   }
 
-  static String _makeToken() {
+  static String makeToken() {
     final rnd = Random.secure();
     const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
     return List.generate(24, (_) => alphabet[rnd.nextInt(alphabet.length)])
