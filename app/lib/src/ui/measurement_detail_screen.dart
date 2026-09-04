@@ -16,6 +16,7 @@ import '../models/project.dart';
 import '../platform/file_picker.dart';
 import '../services/project_store.dart';
 import 'detailed_chart.dart';
+import 'fullscreen_chart.dart';
 
 class MeasurementDetailScreen extends StatefulWidget {
   const MeasurementDetailScreen({
@@ -330,6 +331,23 @@ class _MeasurementDetailScreenState extends State<MeasurementDetailScreen> {
               traces: _allTraces,
               title: widget.title,
               subtitle: widget.subtitle,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => FullscreenChartScreen(
+                    traces: _allTraces,
+                    title: widget.title,
+                    subtitle: widget.subtitle,
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.fullscreen, size: 20),
+              label: const Text('Full screen'),
             ),
           ),
           if (widget.store != null) ...[

@@ -54,7 +54,12 @@ class DetailedFrChart extends StatefulWidget {
     this.dbMax,
     this.phaseMin = -180,
     this.phaseMax = 180,
+    this.fill = false,
   });
+
+  /// Take all the room available instead of a 4:3 box. Used by the fullscreen
+  /// view, where the plot is the whole point of the screen.
+  final bool fill;
 
   final List<DetailedTrace> traces;
   final String title;
@@ -367,6 +372,36 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
     });
   }
 
+  Widget _plot() {
+    final chart = LayoutBuilder(builder: (context, box) {
+      final size = Size(box.maxWidth, box.maxHeight);
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onScaleStart: _onScaleStart,
+        onScaleUpdate: (d) => _onScaleUpdate(d, size),
+        child: CustomPaint(
+          painter: _DetailedPainter(
+            traces: _visible,
+            fMin: fLo,
+            fMax: fHi,
+            dbMin: dbLo,
+            dbMax: dbHi,
+            phaseMin: widget.phaseMin,
+            phaseMax: widget.phaseMax,
+            cursorHz: _cursorHz,
+            markers: _extremes(),
+            // With the whole screen there is room to label properly; boxed
+            // into a portrait page there is not, and crowded ticks are worse
+            // than fewer of them.
+            dense: widget.fill,
+          ),
+          size: Size.infinite,
+        ),
+      );
+    });
+    return widget.fill ? chart : AspectRatio(aspectRatio: 4 / 3, child: chart);
+  }
+
   Widget _chip(
       {required String label,
       required bool selected,
@@ -512,31 +547,7 @@ class _DetailedFrChartState extends State<DetailedFrChart> {
           ),
           if (_cursorHz != null) _readoutPanel(),
           const SizedBox(height: 6),
-          AspectRatio(
-            aspectRatio: 4 / 3,
-            child: LayoutBuilder(builder: (context, box) {
-              final size = Size(box.maxWidth, box.maxHeight);
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onScaleStart: _onScaleStart,
-                onScaleUpdate: (d) => _onScaleUpdate(d, size),
-                child: CustomPaint(
-                  painter: _DetailedPainter(
-                    traces: _visible,
-                    fMin: fLo,
-                    fMax: fHi,
-                    dbMin: dbLo,
-                    dbMax: dbHi,
-                    phaseMin: widget.phaseMin,
-                    phaseMax: widget.phaseMax,
-                    cursorHz: _cursorHz,
-                    markers: _extremes(),
-                  ),
-                  size: Size.infinite,
-                ),
-              );
-            }),
-          ),
+          if (widget.fill) Expanded(child: _plot()) else _plot(),
           const SizedBox(height: 8),
           Wrap(spacing: 14, runSpacing: 4, children: [
             for (final t in widget.traces)
@@ -611,7 +622,11 @@ class _DetailedPainter extends CustomPainter {
     required this.phaseMax,
     this.cursorHz,
     this.markers = const [],
+    this.dense = false,
   });
+
+  /// Label every step rather than only the decade marks.
+  final bool dense;
 
   final double? cursorHz;
   final List<({double hz, double db, bool isPeak})> markers;
@@ -656,11 +671,21 @@ class _DetailedPainter extends CustomPainter {
 
     // Frequency grid: a line at every 1-2-3-4-5-6-7-8-9 in each decade, labels
     // only on the ones REW labels, so the scale is readable but not cluttered.
+    // What REW labels: every 1-2-3-4-5-6-8 step, not just the decades. Ten
+    // octaves across a phone in portrait cannot carry that many without the
+    // text colliding, so the full set is used only when there is room.
     const wide = {20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000};
+    const denseSet = {
+      20, 30, 40, 50, 60, 80,
+      100, 200, 300, 400, 500, 600, 800,
+      1000, 2000, 3000, 4000, 5000, 6000, 8000,
+      10000, 20000,
+    };
+    final labelled = dense ? denseSet : wide;
     // Zoomed in, the wide set can leave the axis with one label or none, so
     // fall back to labelling every gridline in view.
     var inView = 0;
-    for (final f in wide) {
+    for (final f in labelled) {
       if (f >= fMin && f <= fMax) inView++;
     }
     final labelAll = inView < 3;
@@ -669,7 +694,7 @@ class _DetailedPainter extends CustomPainter {
         final f = decade * m;
         if (f < fMin || f > fMax) continue;
         final x = _x(f, size);
-        final isMajor = wide.contains(f.round());
+        final isMajor = labelled.contains(f.round());
         canvas.drawLine(Offset(x, plot.top), Offset(x, plot.bottom),
             isMajor ? major : minor);
         if (isMajor || labelAll) {
@@ -677,19 +702,35 @@ class _DetailedPainter extends CustomPainter {
               f >= 1000 ? '${(f / 1000).toStringAsFixed(f % 1000 == 0 ? 0 : 1)}k' : '${f.round()}';
           _text(canvas, t, Offset(x - 10, plot.bottom + 4), 10, Colors.white70);
         }
+        // Decade boundaries drawn brighter, so the eye can find its place
+        // without reading the numbers.
+        if (m == 1) {
+          canvas.drawLine(Offset(x, plot.top), Offset(x, plot.bottom),
+              Paint()..color = Colors.white30..strokeWidth = 1);
+        }
       }
+    }
+
+    if (dense) {
+      // Named axes. Obvious to whoever took the measurement, not at all obvious
+      // to whoever is handed the picture afterwards.
+      _text(canvas, 'SPL (dB)', const Offset(4, 2), 10, Colors.white54);
+      _text(canvas, 'Frequency (Hz)',
+          Offset(plot.right - 76, plot.bottom + 20), 10, Colors.white54);
     }
 
     // Magnitude grid: step chosen for the window on screen, so zooming in gives
     // finer divisions instead of one line across the middle.
     final dbSpan = (dbMax - dbMin).abs();
-    final step = dbSpan > 120
+    // With the whole screen there is height for twice as many divisions, which
+    // is the difference between reading a level off the chart and estimating it.
+    final step = dbSpan > (dense ? 200 : 120)
         ? 20.0
-        : dbSpan > 60
+        : dbSpan > (dense ? 120 : 60)
             ? 10.0
-            : dbSpan > 25
+            : dbSpan > (dense ? 50 : 25)
                 ? 5.0
-                : dbSpan > 12
+                : dbSpan > (dense ? 24 : 12)
                     ? 2.0
                     : 1.0;
     final firstLine = (dbMin / step).ceilToDouble() * step;
@@ -715,9 +756,13 @@ class _DetailedPainter extends CustomPainter {
       _text(canvas, 'phase', Offset(plot.right + 5, plot.top - 2), 9,
           Colors.white38);
     }
-    _text(canvas, 'dB', Offset(4, plot.top - 2), 9, Colors.white38);
-    _text(canvas, 'Hz', Offset(plot.right - 14, plot.bottom + 16), 9,
-        Colors.white38);
+    // The short unit marks are the cramped version of the named axes, so only
+    // one or the other — together they overlap into "SPL (dB)dB".
+    if (!dense) {
+      _text(canvas, 'dB', Offset(4, plot.top - 2), 9, Colors.white38);
+      _text(canvas, 'Hz', Offset(plot.right - 14, plot.bottom + 16), 9,
+          Colors.white38);
+    }
 
     canvas.save();
     canvas.clipRect(plot);
