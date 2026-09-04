@@ -33,6 +33,13 @@ class _PolarityScreenState extends State<PolarityScreen> {
   SummationResult? _result;
   String? _error;
 
+  /// Which step is capturing, or null. This screen measures through the service
+  /// directly rather than through the wizard's _run() wrapper, so it does not
+  /// get the controller's busy flag for free — and without it the button gave
+  /// no sign it was working and could be tapped again mid-sweep, starting a
+  /// second capture over the first.
+  String? _busyStep;
+
   /// Built once. `setup.channels` constructs a fresh list on every call, so a
   /// selection held from one call never matches an item from the next and the
   /// dropdown silently shows its hint instead of the choice you made.
@@ -41,7 +48,11 @@ class _PolarityScreenState extends State<PolarityScreen> {
   bool get _ready => _a != null && _b != null && _a != _b;
 
   Future<void> _measureInto(String what) async {
-    setState(() => _error = null);
+    if (_busyStep != null) return;
+    setState(() {
+      _error = null;
+      _busyStep = what;
+    });
     try {
       final m = await c.service.measureAveraged(1, band: SweepBand.full);
       if (!mounted) return;
@@ -61,6 +72,10 @@ class _PolarityScreenState extends State<PolarityScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
+    } finally {
+      // Cleared on every path: a capture that fails must not leave the screen
+      // permanently unable to measure again.
+      if (mounted) setState(() => _busyStep = null);
     }
   }
 
@@ -112,21 +127,21 @@ class _PolarityScreenState extends State<PolarityScreen> {
               'Play only ${_a!.name}',
               'Mute everything else in your DSP app, then measure.',
               _aOnly != null,
-              () => _measureInto('a'),
+              'a',
             ),
             _step(
               2,
               'Play only ${_b!.name}',
               'Mute everything else, then measure.',
               _bOnly != null,
-              () => _measureInto('b'),
+              'b',
             ),
             _step(
               3,
               'Play both together',
               'Unmute both — and only these two — then measure.',
               _both != null,
-              () => _measureInto('both'),
+              'both',
             ),
             _step(
               4,
@@ -135,7 +150,7 @@ class _PolarityScreenState extends State<PolarityScreen> {
                   '${_b!.name} in the DSP, measure, then set it back. '
                   'Comparing the two directly beats inferring from one.',
               _bothInverted != null,
-              () => _measureInto('inverted'),
+              'inverted',
             ),
           ],
           if (_error != null)
@@ -222,33 +237,55 @@ class _PolarityScreenState extends State<PolarityScreen> {
         ),
       ]);
 
-  Widget _step(int n, String title, String detail, bool done,
-          VoidCallback onMeasure) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(done ? Icons.check_circle : Icons.circle_outlined,
-                size: 20,
-                color: done ? Colors.green : Theme.of(context).disabledColor),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('$n. $title',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  Text(detail, style: Theme.of(context).textTheme.bodySmall),
-                ],
-              ),
+  Widget _step(int n, String title, String detail, bool done, String step) {
+    final measuringThis = _busyStep == step;
+    final anyMeasuring = _busyStep != null;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            measuringThis
+                ? Icons.graphic_eq
+                : (done ? Icons.check_circle : Icons.circle_outlined),
+            size: 20,
+            color: measuringThis
+                ? Theme.of(context).colorScheme.primary
+                : (done ? Colors.green : Theme.of(context).disabledColor),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$n. $title',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(
+                  measuringThis
+                      ? 'Playing the sweep and recording — keep the '
+                          'microphone still.'
+                      : detail,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            FilledButton.tonal(
-              onPressed: c.busy ? null : onMeasure,
-              child: Text(done ? 'Again' : 'Measure'),
-            ),
-          ],
-        ),
-      );
+          ),
+          const SizedBox(width: 8),
+          // Every other step is disabled while one is running: two captures at
+          // once would fight over the microphone and neither would be usable.
+          FilledButton.tonal(
+            onPressed: anyMeasuring ? null : () => _measureInto(step),
+            child: measuringThis
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(done ? 'Again' : 'Measure'),
+          ),
+        ],
+      ),
+    );
+  }
 }
